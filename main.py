@@ -1,3 +1,4 @@
+import json
 import os
 import requests
 import tempfile
@@ -55,18 +56,56 @@ def detect_vehicles(roboflow_client, frame):
         return "no vehicles detected"
     return ", ".join(f"{count} {cls}" for cls, count in sorted(counts.items()))
 
-def open_camera_viewer(cam, image_url, interval):
-    """Opens a local HTML page that auto-refreshes the camera image in the browser."""
+def open_camera_viewer(cam, image_url, interval, all_cams):
+    """Opens a local HTML page with the auto-refreshing camera image and a map
+    of all camera locations, highlighting this camera's position."""
+    markers = [
+        {"id": c.get("id"), "name": c.get("name"), "lat": c.get("latitude"), "lon": c.get("longitude")}
+        for c in all_cams
+        if c.get("latitude") is not None and c.get("longitude") is not None
+    ]
+    current = {"id": cam.get("id"), "name": cam.get("name"), "lat": cam.get("latitude"), "lon": cam.get("longitude")}
+
     html = f"""<!DOCTYPE html>
 <html>
-<head><title>{cam.get('name')}</title></head>
-<body style="margin:0;background:#111;color:#eee;font-family:sans-serif;text-align:center;">
-<h2>{cam.get('name')} ({cam.get('area')})</h2>
-<img id="cam" src="{image_url}" style="max-width:100%;">
+<head>
+<title>{cam.get('name')}</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  body {{ margin:0; background:#111; color:#eee; font-family:sans-serif; display:flex; height:100vh; }}
+  .pane {{ width:50%; height:100vh; box-sizing:border-box; }}
+  #cam-pane {{ text-align:center; overflow:auto; }}
+  #map {{ height:100%; }}
+</style>
+</head>
+<body>
+<div class="pane" id="cam-pane">
+  <h2>{cam.get('name')} ({cam.get('area')})</h2>
+  <img id="cam" src="{image_url}" style="max-width:100%;">
+</div>
+<div class="pane" id="map"></div>
 <script>
 setInterval(function() {{
     document.getElementById('cam').src = "{image_url}?t=" + Date.now();
 }}, {interval * 1000});
+
+const cameras = {json.dumps(markers)};
+const current = {json.dumps(current)};
+const map = L.map('map').setView([current.lat, current.lon], 12);
+L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+    attribution: '&copy; OpenStreetMap contributors'
+}}).addTo(map);
+cameras.forEach(function(c) {{
+    if (c.id === current.id) return;
+    L.circleMarker([c.lat, c.lon], {{radius: 4, color: '#3388ff', fillOpacity: 0.6}})
+        .addTo(map)
+        .bindPopup(c.name);
+}});
+L.circleMarker([current.lat, current.lon], {{radius: 10, color: '#ff3333', fillColor: '#ff3333', fillOpacity: 0.9, weight: 2}})
+    .addTo(map)
+    .bindPopup(current.name)
+    .openPopup();
 </script>
 </body>
 </html>"""
@@ -75,7 +114,7 @@ setInterval(function() {{
         f.write(html)
     webbrowser.open(f"file://{path}")
 
-def poll_camera(cam, interval=10):
+def poll_camera(cam, all_cams, interval=10):
     """Polls a specific camera's image URL in a loop."""
     print(f"Polling camera: {cam.get('name')} (ID: {cam.get('id')})")
     print(f"Borough: {cam.get('area')}")
@@ -86,7 +125,7 @@ def poll_camera(cam, interval=10):
         print("No image URL available for this camera.")
         return
 
-    open_camera_viewer(cam, image_url, interval)
+    open_camera_viewer(cam, image_url, interval, all_cams)
 
     vertexai.init(project=PROJECT_ID, location=LOCATION)
     model = GenerativeModel("gemini-2.5-flash")
@@ -134,7 +173,7 @@ def main():
     
     # Simple selection logic: first online camera
     cam = online[0]
-    poll_camera(cam)
+    poll_camera(cam, online)
 
 if __name__ == "__main__":
     main()
