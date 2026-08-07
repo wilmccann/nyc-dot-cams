@@ -1,6 +1,22 @@
+import os
 import requests
 import time
 import sys
+
+import cv2
+import numpy as np
+import vertexai
+from dotenv import load_dotenv
+from vertexai.generative_models import GenerativeModel, Part
+from inference_sdk import InferenceHTTPClient
+
+load_dotenv()
+
+PROJECT_ID = "cloudrun-hack26nyc-4392"
+LOCATION = "us-central1"
+
+ROBOFLOW_API_URL = "https://serverless.roboflow.com"
+ROBOFLOW_MODEL_ID = "vehicle-detection-3mmwj/1"
 
 def get_cameras():
     """Fetches all cameras from the NYC DOT API."""
@@ -17,16 +33,44 @@ def filter_online_cameras(cameras):
     """Filters for cameras that are currently online."""
     return [c for c in cameras if str(c.get("isOnline")).lower() == "true"]
 
-def poll_camera(cam, interval=2):
+def analyze_frame(model, frame):
+    """Sends a frame to Vertex AI Gemini for a one-sentence traffic description."""
+    image_part = Part.from_data(frame, mime_type="image/jpeg")
+    response = model.generate_content(
+        [image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."]
+    )
+    return response.text.strip()
+
+def detect_vehicles(roboflow_client, frame):
+    """Runs Roboflow object detection on a frame and summarizes counts by class."""
+    image = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+    result = roboflow_client.infer(image, model_id=ROBOFLOW_MODEL_ID)
+    predictions = result.get("predictions", [])
+    counts = {}
+    for pred in predictions:
+        counts[pred["class"]] = counts.get(pred["class"], 0) + 1
+    if not counts:
+        return "no vehicles detected"
+    return ", ".join(f"{count} {cls}" for cls, count in sorted(counts.items()))
+
+def poll_camera(cam, interval=10):
     """Polls a specific camera's image URL in a loop."""
     print(f"Polling camera: {cam.get('name')} (ID: {cam.get('id')})")
     print(f"Borough: {cam.get('area')}")
     print("Press Ctrl+C to stop.")
-    
+
     image_url = cam.get("imageUrl")
     if not image_url:
         print("No image URL available for this camera.")
         return
+
+    vertexai.init(project=PROJECT_ID, location=LOCATION)
+    model = GenerativeModel("gemini-2.5-flash")
+
+    roboflow_client = InferenceHTTPClient(
+        api_url=ROBOFLOW_API_URL,
+        api_key=os.environ["ROBOFLOW_API_KEY"],
+    )
 
     try:
         while True:
@@ -34,16 +78,16 @@ def poll_camera(cam, interval=2):
                 response = requests.get(image_url)
                 response.raise_for_status()
                 frame = response.content
-                
-                # Placeholder for Roboflow or other inference
-                print(f"[{time.strftime('%H:%M:%S')}] Frame captured ({len(frame)} bytes)")
-                
-                # If you were using Roboflow, you'd call it here:
-                # results = roboflow_model.predict(frame)
-                
+
+                description = analyze_frame(model, frame)
+                vehicles = detect_vehicles(roboflow_client, frame)
+                print(f"[{time.strftime('%H:%M:%S')}] {description} | Detected: {vehicles}")
+
             except requests.RequestException as e:
                 print(f"Error fetching frame: {e}")
-            
+            except Exception as e:
+                print(f"Error analyzing frame: {e}")
+
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\nPolling stopped.")

@@ -25,3 +25,5 @@ uv run main.py
 - [ ] Integrate Roboflow inference.
 - [ ] Save frames locally or stream to a visualization tool.
 - [ ] Implement multi-camera polling.
+
+                                                      
