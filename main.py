@@ -1,7 +1,9 @@
 import os
 import requests
+import tempfile
 import time
 import sys
+import webbrowser
 
 import cv2
 import numpy as np
@@ -53,6 +55,26 @@ def detect_vehicles(roboflow_client, frame):
         return "no vehicles detected"
     return ", ".join(f"{count} {cls}" for cls, count in sorted(counts.items()))
 
+def open_camera_viewer(cam, image_url, interval):
+    """Opens a local HTML page that auto-refreshes the camera image in the browser."""
+    html = f"""<!DOCTYPE html>
+<html>
+<head><title>{cam.get('name')}</title></head>
+<body style="margin:0;background:#111;color:#eee;font-family:sans-serif;text-align:center;">
+<h2>{cam.get('name')} ({cam.get('area')})</h2>
+<img id="cam" src="{image_url}" style="max-width:100%;">
+<script>
+setInterval(function() {{
+    document.getElementById('cam').src = "{image_url}?t=" + Date.now();
+}}, {interval * 1000});
+</script>
+</body>
+</html>"""
+    fd, path = tempfile.mkstemp(suffix=".html")
+    with os.fdopen(fd, "w") as f:
+        f.write(html)
+    webbrowser.open(f"file://{path}")
+
 def poll_camera(cam, interval=10):
     """Polls a specific camera's image URL in a loop."""
     print(f"Polling camera: {cam.get('name')} (ID: {cam.get('id')})")
@@ -63,6 +85,8 @@ def poll_camera(cam, interval=10):
     if not image_url:
         print("No image URL available for this camera.")
         return
+
+    open_camera_viewer(cam, image_url, interval)
 
     vertexai.init(project=PROJECT_ID, location=LOCATION)
     model = GenerativeModel("gemini-2.5-flash")
