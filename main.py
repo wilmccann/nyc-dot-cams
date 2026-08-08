@@ -56,20 +56,26 @@ def detect_vehicles(roboflow_client, frame):
         return "no vehicles detected"
     return ", ".join(f"{count} {cls}" for cls, count in sorted(counts.items()))
 
-def open_camera_viewer(cam, image_url, interval, all_cams):
-    """Opens a local HTML page with the auto-refreshing camera image and a map
-    of all camera locations, highlighting this camera's position."""
+def open_camera_viewer(all_cams, interval):
+    """Opens a local HTML page that rotates through all_cams every interval seconds,
+    showing each camera's live image and highlighting its position on a map."""
     markers = [
-        {"id": c.get("id"), "name": c.get("name"), "lat": c.get("latitude"), "lon": c.get("longitude")}
+        {
+            "id": c.get("id"),
+            "name": c.get("name"),
+            "area": c.get("area"),
+            "lat": c.get("latitude"),
+            "lon": c.get("longitude"),
+            "imageUrl": c.get("imageUrl"),
+        }
         for c in all_cams
-        if c.get("latitude") is not None and c.get("longitude") is not None
+        if c.get("latitude") is not None and c.get("longitude") is not None and c.get("imageUrl")
     ]
-    current = {"id": cam.get("id"), "name": cam.get("name"), "lat": cam.get("latitude"), "lon": cam.get("longitude")}
 
     html = f"""<!DOCTYPE html>
 <html>
 <head>
-<title>{cam.get('name')}</title>
+<title>NYC DOT Camera Rotation</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -81,31 +87,47 @@ def open_camera_viewer(cam, image_url, interval, all_cams):
 </head>
 <body>
 <div class="pane" id="cam-pane">
-  <h2>{cam.get('name')} ({cam.get('area')})</h2>
-  <img id="cam" src="{image_url}" style="max-width:100%;">
+  <h2 id="cam-title"></h2>
+  <img id="cam" style="max-width:100%;">
 </div>
 <div class="pane" id="map"></div>
 <script>
-setInterval(function() {{
-    document.getElementById('cam').src = "{image_url}?t=" + Date.now();
-}}, {interval * 1000});
-
 const cameras = {json.dumps(markers)};
-const current = {json.dumps(current)};
-const map = L.map('map').setView([current.lat, current.lon], 12);
+const rotateMs = {interval * 1000};
+
+const map = L.map('map').setView([cameras[0].lat, cameras[0].lon], 12);
 L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
     attribution: '&copy; OpenStreetMap contributors'
 }}).addTo(map);
+
 cameras.forEach(function(c) {{
-    if (c.id === current.id) return;
     L.circleMarker([c.lat, c.lon], {{radius: 4, color: '#3388ff', fillOpacity: 0.6}})
         .addTo(map)
         .bindPopup(c.name);
 }});
-L.circleMarker([current.lat, current.lon], {{radius: 10, color: '#ff3333', fillColor: '#ff3333', fillOpacity: 0.9, weight: 2}})
-    .addTo(map)
-    .bindPopup(current.name)
-    .openPopup();
+
+const camImg = document.getElementById('cam');
+const camTitle = document.getElementById('cam-title');
+let highlight = null;
+
+function showCamera(i) {{
+    const c = cameras[i];
+    camImg.src = c.imageUrl + "?t=" + Date.now();
+    camTitle.textContent = c.name + " (" + c.area + ")";
+    if (highlight) {{ map.removeLayer(highlight); }}
+    highlight = L.circleMarker([c.lat, c.lon], {{radius: 10, color: '#ff3333', fillColor: '#ff3333', fillOpacity: 0.9, weight: 2}})
+        .addTo(map)
+        .bindPopup(c.name)
+        .openPopup();
+    map.panTo([c.lat, c.lon]);
+}}
+
+let idx = 0;
+showCamera(idx);
+setInterval(function() {{
+    idx = (idx + 1) % cameras.length;
+    showCamera(idx);
+}}, rotateMs);
 </script>
 </body>
 </html>"""
@@ -114,18 +136,12 @@ L.circleMarker([current.lat, current.lon], {{radius: 10, color: '#ff3333', fillC
         f.write(html)
     webbrowser.open(f"file://{path}")
 
-def poll_camera(cam, all_cams, interval=10):
-    """Polls a specific camera's image URL in a loop."""
-    print(f"Polling camera: {cam.get('name')} (ID: {cam.get('id')})")
-    print(f"Borough: {cam.get('area')}")
+def poll_camera(all_cams, interval=10):
+    """Rotates through all_cams, analyzing one camera's frame every interval seconds."""
+    print(f"Rotating through {len(all_cams)} online cameras every {interval}s.")
     print("Press Ctrl+C to stop.")
 
-    image_url = cam.get("imageUrl")
-    if not image_url:
-        print("No image URL available for this camera.")
-        return
-
-    open_camera_viewer(cam, image_url, interval, all_cams)
+    open_camera_viewer(all_cams, interval)
 
     vertexai.init(project=PROJECT_ID, location=LOCATION)
     model = GenerativeModel("gemini-2.5-flash")
@@ -135,22 +151,29 @@ def poll_camera(cam, all_cams, interval=10):
         api_key=os.environ["ROBOFLOW_API_KEY"],
     )
 
+    idx = 0
     try:
         while True:
+            cam = all_cams[idx]
+            image_url = cam.get("imageUrl")
             try:
-                response = requests.get(image_url)
-                response.raise_for_status()
-                frame = response.content
+                if image_url:
+                    response = requests.get(image_url)
+                    response.raise_for_status()
+                    frame = response.content
 
-                description = analyze_frame(model, frame)
-                vehicles = detect_vehicles(roboflow_client, frame)
-                print(f"[{time.strftime('%H:%M:%S')}] {description} | Detected: {vehicles}")
+                    description = analyze_frame(model, frame)
+                    vehicles = detect_vehicles(roboflow_client, frame)
+                    print(f"[{time.strftime('%H:%M:%S')}] {cam.get('name')}: {description} | Detected: {vehicles}")
+                else:
+                    print(f"[{time.strftime('%H:%M:%S')}] {cam.get('name')}: no image URL available.")
 
             except requests.RequestException as e:
-                print(f"Error fetching frame: {e}")
+                print(f"Error fetching frame for {cam.get('name')}: {e}")
             except Exception as e:
-                print(f"Error analyzing frame: {e}")
+                print(f"Error analyzing frame for {cam.get('name')}: {e}")
 
+            idx = (idx + 1) % len(all_cams)
             time.sleep(interval)
     except KeyboardInterrupt:
         print("\nPolling stopped.")
@@ -166,14 +189,10 @@ def main():
         print("No online cameras found.")
         return
 
-    # For now, let's just pick the first online camera or let the user filter.
-    # We could implement a simple filter by borough if desired.
     boroughs = sorted(list(set(c.get("area") for c in online if c.get("area"))))
     print(f"Available boroughs: {', '.join(boroughs)}")
-    
-    # Simple selection logic: first online camera
-    cam = online[0]
-    poll_camera(cam, online)
+
+    poll_camera(online)
 
 if __name__ == "__main__":
     main()
