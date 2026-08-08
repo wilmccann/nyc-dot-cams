@@ -71,7 +71,7 @@ running, not just that the container responds) with:
 Open it in your browser — handles both the public and authenticated-only
 case (starting a local proxy automatically if needed):
 ```bash
-./scripts/cloud-run-open.sh
+./scripts/run-client.sh
 ```
 See the [Runbook](docs/RUNBOOK.md#google-cloud-run) for what
 `--min-instances=1`/`--max-instances=1` are protecting against, and

@@ -224,11 +224,11 @@ real production deployment — fine for a one-off verification, not for
 something staying up long-term with secrets visible in the service's
 revision config.
 
-### Opening it in a browser: `scripts/cloud-run-open.sh`
+### Opening it in a browser: `scripts/run-client.sh`
 
 Since it's deployed authenticated-only by default, a plain browser tab
 can't load it directly (no way to attach an auth header via navigation).
-`./scripts/cloud-run-open.sh` handles this either way: if the service is
+`./scripts/run-client.sh` handles this either way: if the service is
 public (see [Making it publicly reachable](#making-it-publicly-reachable)),
 it opens the URL directly; if not, it starts
 `gcloud run services proxy` in the background (reusing one already
