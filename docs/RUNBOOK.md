@@ -135,12 +135,18 @@ Billing is per-request/per-100ms-of-CPU-and-memory while handling traffic
 (or a fixed cost for pinned `min-instances`, which this deployment uses —
 see below), not a flat monthly server price.
 
-### The actual deploy command used
+### Deploying: `scripts/cloud-run-start.sh`
 
 ```bash
 gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
-  --project=cloudrun-hack26nyc-4392
+  --project=cloudrun-hack26nyc-4392   # one-time, if not already enabled
 
+./scripts/cloud-run-start.sh
+```
+
+The script reads `ROBOFLOW_API_KEY` out of `.env` (erroring clearly if
+it's missing) and runs:
+```bash
 gcloud run deploy nyc-dot-cams \
   --source . \
   --region us-central1 \
@@ -149,8 +155,11 @@ gcloud run deploy nyc-dot-cams \
   --min-instances=1 \
   --max-instances=1 \
   --memory 1Gi \
-  --set-env-vars ROBOFLOW_API_KEY=your_key_here
+  --set-env-vars ROBOFLOW_API_KEY=...
 ```
+then prints the deployed URL and the proxy command to view it. This is
+the exact command used for the original verification deploy — the script
+just wraps it so the key never needs pasting into a terminal by hand.
 
 `--source .` hands the whole repo to Cloud Build, which builds the
 `Dockerfile` and deploys the result — this is what got build-tested
@@ -248,7 +257,7 @@ credentials are exposed by doing this (they only ever live server-side);
 it just means anyone with the URL can load the page and generate traffic
 against the one pinned instance.
 
-### Tearing it down
+### Tearing it down: `scripts/cloud-run-stop.sh`
 
 This deployment bills continuously while it exists (`min-instances=1`
 means an always-on instance, and the rotation loop makes real paid
@@ -256,11 +265,12 @@ Vertex AI/Roboflow calls every 10 seconds the whole time — see
 [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md#cost-the-thinking-token-problem)).
 Don't leave a verification deploy running unattended:
 ```bash
-gcloud run services delete nyc-dot-cams --region us-central1 --project cloudrun-hack26nyc-4392
+./scripts/cloud-run-stop.sh
 ```
-Redeploying later is the same one `gcloud run deploy` command above —
-nothing about the teardown is destructive to the code or config, only to
-the live running instance.
+Runs `gcloud run services delete nyc-dot-cams --region us-central1 --project cloudrun-hack26nyc-4392`.
+Redeploying later is just `./scripts/cloud-run-start.sh` again — nothing
+about the teardown is destructive to the code or config, only to the live
+running instance.
 
 **Relevant docs:** [Cloud Run overview](https://cloud.google.com/run/docs/overview/what-is-cloud-run) · [Deploying from source](https://cloud.google.com/run/docs/deploying-source-code) · [Cloud Run Jobs](https://cloud.google.com/run/docs/create-jobs) (the alternative design — see [design/cloud-run-deployment.md](design/cloud-run-deployment.md#alternative-cloud-run-jobs--cloud-scheduler))
 

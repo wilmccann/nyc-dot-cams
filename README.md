@@ -60,15 +60,16 @@ Then open `http://localhost:8080/`.
 
 Deploy it:
 ```bash
-gcloud run deploy nyc-dot-cams --source . --region us-central1 \
-  --no-allow-unauthenticated --min-instances=1 --max-instances=1 --memory 1Gi \
-  --set-env-vars ROBOFLOW_API_KEY=your_key_here
+./scripts/cloud-run-start.sh
 ```
-See the Runbook for what `--min-instances=1`/`--max-instances=1` are
-protecting against, and **don't leave a deployment running unattended** —
-it makes real, continuously-billed Vertex AI/Roboflow calls the whole time
-it's up (`gcloud run services delete nyc-dot-cams --region us-central1`
-to tear down).
+Reads `ROBOFLOW_API_KEY` from `.env` and prints the deployed URL. See the
+[Runbook](docs/RUNBOOK.md#google-cloud-run) for what `--min-instances=1`/
+`--max-instances=1` are protecting against, and **don't leave a deployment
+running unattended** — it makes real, continuously-billed Vertex AI/Roboflow
+calls the whole time it's up:
+```bash
+./scripts/cloud-run-stop.sh
+```
 
 Known limitation, not yet fixed: each browser tab rotates its own
 displayed image independently of the server's single shared analysis
