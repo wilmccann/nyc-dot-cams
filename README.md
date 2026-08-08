@@ -13,6 +13,7 @@ every camera.
 - [API examples](docs/API_EXAMPLES.md) — real captured request/response payloads from every external API, so the code is understandable even without live Vertex AI/Roboflow access
 - [Production readiness](docs/PRODUCTION_READINESS.md) — honest gap analysis: cost, throughput, reliability, observability, security, testing
 - [Design: fully local deployment](docs/design/local-deployment.md) — proposal to replace Vertex AI and Roboflow with on-device models (not implemented)
+- [Design: Cloud Run deployment](docs/design/cloud-run-deployment.md) — proposal to deploy this as a Cloud Run service, plus a batch-pipeline alternative (not implemented)
 - [Changelog](docs/CHANGELOG.md) — what was built, commit by commit
 
 ## Setup
