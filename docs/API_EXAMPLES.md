@@ -10,13 +10,17 @@ because the exact frame shown here is what produced the Vertex AI and
 Roboflow examples below (same camera, same moment).
 
 If you no longer have working credentials, this doc is the way to still
-understand exactly what shape of data flows through `main.py` — read it
-alongside [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md), which explains what
-the code *does* with each of these shapes.
+understand exactly what shape of data flows through `pipeline.py` (shared
+by both entry points, `main.py` and the Cloud Run service `app.py`) — read
+it alongside [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md), which explains
+what the code *does* with each of these shapes. Section 5 below also
+documents the API this project now *exposes itself*, once deployed as a
+Cloud Run service.
 
 ## 1. NYC DOT Camera List — `GET https://webcams.nyctmc.org/api/cameras`
 
-No auth required. Called once at startup by `get_cameras()`. Returns an
+No auth required. Called once at startup by `get_cameras()` in
+`pipeline.py`. Returns an
 array of ~968 objects; one shown here:
 
 ```json
@@ -168,3 +172,65 @@ Notes:
 - Only one detection at 0.615 confidence — the model has no built-in
   confidence threshold applied here; every prediction Roboflow returns gets
   counted, however low-confidence.
+
+## 5. Our own API — `app.py` (Cloud Run service)
+
+Deploying the design in
+[design/cloud-run-deployment.md](design/cloud-run-deployment.md) means this
+project now exposes two endpoints of its own, not just consumes external
+ones. Captured from the actual verification deployment on Cloud Run
+(2026-08-08), while it was briefly made public for direct browser testing.
+
+### `GET /`
+
+Returns the full viewer page (HTML/CSS/JS) as a string — same content
+`main.py`'s `open_camera_viewer()` writes to a temp file locally, but
+served over HTTP instead. No parameters, no auth-relevant content in the
+body (the embedded camera list is the same public NYC DOT data as section
+1 above, just pre-fetched server-side at startup instead of client-side
+per request).
+
+### `GET /api/status`
+
+Polled by the page's own JS every 5 seconds (see
+`pollStatus()` in `app.py`) to update the analysis panel. Real captured
+response:
+
+```json
+{
+  "camera": {
+    "id": "8ccc0c64-65a5-42f9-9eba-cf7aa4a51b09",
+    "name": "Belt Pkwy @ Cross Island Split",
+    "area": "Queens"
+  },
+  "description": "Light to moderate nighttime traffic is visible on wet roads.",
+  "vehicles": "no vehicles detected",
+  "updated_at": 1786152644.90213
+}
+```
+
+Before the background rotation loop has completed its first cycle (e.g.
+immediately after a cold start), every field except `updated_at` is
+`null`:
+```json
+{"camera": null, "description": null, "vehicles": null, "updated_at": null}
+```
+The client's `pollStatus()` checks for `s.camera` being falsy to show a
+"waiting for first analysis cycle" message in that case, rather than
+trying to render `null` fields.
+
+Notes:
+- This is a deliberately thin wrapper around the `state` dict
+  `rotation_loop()` maintains in memory — there's no database, no request
+  parameters, no pagination. It reflects whatever camera the server's
+  single shared rotation loop most recently finished analyzing, which is
+  **not necessarily the camera currently pictured in the page's image
+  pane** — see the detailed writeup of why in
+  [design/cloud-run-deployment.md](design/cloud-run-deployment.md#known-limitation-found-during-implementation-image-and-analysis-can-point-at-different-cameras).
+- `updated_at` is a Unix timestamp (`time.time()`), not ISO 8601 — the
+  client computes age in seconds as `Date.now()/1000 - s.updated_at`
+  rather than parsing a datetime string.
+- No caching headers, no ETag — every poll does a fresh in-memory dict
+  read (cheap) but there's nothing here to prevent a client from polling
+  far more often than 5s if it wanted to; nothing rate-limits `/api/status`
+  itself (see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md)).

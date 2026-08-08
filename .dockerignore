@@ -1,0 +1,11 @@
+.venv
+.git
+.idea
+.DS_Store
+*.mov
+.env
+__pycache__
+*.pyc
+docs
+Pycharmsetup.txt.rtf
+log-claude.rtf
