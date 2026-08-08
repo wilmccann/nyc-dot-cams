@@ -116,7 +116,7 @@ Hardcoded constants — no config file yet, and no difference between
 | Rotation interval (`app.py`) | `ROTATE_INTERVAL` constant | 10 seconds |
 | GCP project | `pipeline.PROJECT_ID` | `cloudrun-hack26nyc-4392` |
 | Vertex AI region | `pipeline.LOCATION` | `us-central1` |
-| Gemini model | hardcoded string in `pipeline.build_vertex_model()` | `gemini-2.5-flash` |
+| Gemini model | hardcoded string in `pipeline.analyze_frame()` (passed per-call, not at client construction) | `gemini-2.5-flash` |
 | Roboflow model | `pipeline.ROBOFLOW_MODEL_ID` | `vehicle-detection-3mmwj/1` (public Roboflow Universe model) |
 
 ## Google Cloud Run
@@ -331,10 +331,14 @@ Despite docs suggesting raw bytes work, `InferenceHTTPClient.infer()`
 wants a decoded image (numpy array / PIL image), not a raw JPEG byte
 string. Decode first: `cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)`.
 
-**Vertex AI `UserWarning: This feature is deprecated`**
-`vertexai.generative_models` is being retired **June 24, 2026** in favor
-of the `google-genai` SDK. Not urgent yet, but the code should migrate
-before then — see [migration guide](https://cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk).
+**Vertex AI `UserWarning: This feature is deprecated`** *(resolved)*
+`vertexai.generative_models` was being retired **June 24, 2026** in favor
+of the `google-genai` SDK — `pipeline.py` migrated onto `google-genai`
+(see [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md#build_vertex_client--build_roboflow_client)),
+so this warning no longer appears. Left here in case an older branch or
+a reverted change brings it back — see the
+[migration guide](https://cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk)
+if so.
 
 **Cloud Run source deploy fails: `PERMISSION_DENIED ... missing required IAM permissions`**
 Cloud Build's default service account lacks read access to its own

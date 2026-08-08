@@ -45,7 +45,7 @@ rather than duplicating it — see [Module map](#module-map) below.
 2. **`GET https://webcams.nyctmc.org/api/cameras/{id}/image`**
    Returns the current JPEG frame for one camera. Called every rotation tick — once from Python (for analysis) and independently, on a separate timer, from the browser tab's JS (for display).
 
-3. **Vertex AI `generateContent`** (via `vertexai.generative_models.GenerativeModel`)
+3. **Vertex AI `generateContent`** (via the `google-genai` SDK's `client.models.generate_content()`)
    `projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent`
    Sends the JPEG bytes + a text prompt, gets back a one-sentence traffic description.
 
@@ -71,7 +71,7 @@ for real captured examples:
 ## Module map
 
 Shared logic lives in **`pipeline.py`**: `get_cameras()`,
-`filter_online_cameras()`, `fetch_frame()`, `build_vertex_model()`,
+`filter_online_cameras()`, `fetch_frame()`, `build_vertex_client()`,
 `build_roboflow_client()`, `analyze_frame()`, `detect_vehicles()`. Neither
 entry point defines these itself.
 

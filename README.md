@@ -84,4 +84,3 @@ detailed in
 - [ ] Move `app.py`'s Roboflow key from `--set-env-vars` to Secret Manager for anything beyond a one-off verification deploy.
 - [ ] Add CLI arguments for filtering by borough or camera name.
 - [ ] Save frames locally or stream to a visualization tool.
-- [ ] Migrate off the deprecated `vertexai.generative_models` SDK before June 2026.

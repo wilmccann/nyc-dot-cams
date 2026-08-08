@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from pipeline import (
     analyze_frame,
     build_roboflow_client,
-    build_vertex_model,
+    build_vertex_client,
     detect_vehicles,
     fetch_frame,
     filter_online_cameras,
@@ -105,7 +105,7 @@ def poll_camera(all_cams, interval=10):
 
     open_camera_viewer(all_cams, interval)
 
-    model = build_vertex_model()
+    vertex_client = build_vertex_client()
     roboflow_client = build_roboflow_client()
 
     idx = 0
@@ -117,7 +117,7 @@ def poll_camera(all_cams, interval=10):
                 if image_url:
                     frame = fetch_frame(image_url)
 
-                    description = analyze_frame(model, frame)
+                    description = analyze_frame(vertex_client, frame)
                     vehicles = detect_vehicles(roboflow_client, frame)
                     print(f"[{time.strftime('%H:%M:%S')}] {cam.get('name')}: {description} | Detected: {vehicles}")
                 else:

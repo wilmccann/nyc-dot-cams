@@ -22,7 +22,7 @@ inform prioritization.
 
 ## Cost: the thinking-token problem
 
-Captured from a real call (see [API_EXAMPLES.md](API_EXAMPLES.md#3-vertex-ai--generativemodelgenerate_content)):
+Captured from a real call (see [API_EXAMPLES.md](API_EXAMPLES.md#3-vertex-ai--clientmodelsgenerate_content)):
 
 ```
 prompt_token_count: 274      (input: the image + instruction)

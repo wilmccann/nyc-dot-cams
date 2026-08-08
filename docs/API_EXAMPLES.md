@@ -50,75 +50,86 @@ Returns a raw JPEG. The one captured for this doc was 18,737 bytes,
 is why `main.py` passes `response.content` directly around rather than
 parsing anything.
 
-## 3. Vertex AI — `GenerativeModel.generate_content()`
+## 3. Vertex AI — `client.models.generate_content()`
 
 This is the SDK call in `analyze_frame()`; under the hood it's a POST to:
 ```
-https://us-central1-aiplatform.googleapis.com/v1/projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent
+https://us-central1-aiplatform.googleapis.com/v1beta1/projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent
 ```
 
-**Input:** the JPEG bytes above (as a `Part`) plus the prompt string
-`"Describe the traffic and road conditions visible in this camera image in
-one concise sentence."`
+**Input:** the JPEG bytes above (as a `Part.from_bytes(data=..., mime_type="image/jpeg")`)
+plus the prompt string `"Describe the traffic and road conditions visible
+in this camera image in one concise sentence."`
 
 **Output** (`response.text`):
 ```
-Moderate nighttime traffic is visible on a wet, reflective road.
+Sparse evening traffic is navigating wet, reflective roads under artificial light.
 ```
 
-**Full response object** (what `response.text` is extracted from — the SDK
-exposes much more than the text):
-```
-candidates {
-  content {
-    role: "model"
-    parts {
-      text: "Moderate nighttime traffic is visible on a wet, reflective road."
-    }
-  }
-  finish_reason: STOP
-  avg_logprobs: -20.939376831054688
-}
-usage_metadata {
-  prompt_token_count: 274
-  candidates_token_count: 12
-  total_token_count: 1026
-  prompt_tokens_details {
-    modality: IMAGE
-    token_count: 258
-  }
-  prompt_tokens_details {
-    modality: TEXT
-    token_count: 16
-  }
-  candidates_tokens_details {
-    modality: TEXT
-    token_count: 12
-  }
-  thoughts_token_count: 740
-}
-model_version: "gemini-2.5-flash"
-create_time {
-  seconds: 1786148512
-  nanos: 900321000
-}
-response_id: "oHZ2auH5NrKy88APudnu2Qc"
+**Full response object**, captured 2026-08-08 using the `google-genai`
+SDK (the `vertexai.generative_models` SDK this project originally used is
+being retired June 24, 2026 — see the migration note in
+[CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md#build_vertex_client--build_roboflow_client)):
+```python
+GenerateContentResponse(
+  automatic_function_calling_history=[],
+  candidates=[
+    Candidate(
+      avg_logprobs=-19.69898165189303,
+      content=Content(
+        parts=[
+          Part(text='Sparse evening traffic is navigating wet, reflective roads under artificial light.'),
+        ],
+        role='model'
+      ),
+      finish_reason=<FinishReason.STOP: 'STOP'>
+    ),
+  ],
+  create_time=datetime.datetime(2026, 8, 8, 1, 59, 51, 294969, tzinfo=TzInfo(0)),
+  model_version='gemini-2.5-flash',
+  response_id='l412armAEq_x88AP7LSy2AQ',
+  sdk_http_response=HttpResponse(headers=<dict len=10>),
+  usage_metadata=GenerateContentResponseUsageMetadata(
+    candidates_token_count=13,
+    candidates_tokens_details=[ModalityTokenCount(modality=<MediaModality.TEXT: 'TEXT'>, token_count=13)],
+    prompt_token_count=274,
+    prompt_tokens_details=[
+      ModalityTokenCount(modality=<MediaModality.TEXT: 'TEXT'>, token_count=16),
+      ModalityTokenCount(modality=<MediaModality.IMAGE: 'IMAGE'>, token_count=258),
+    ],
+    thoughts_token_count=672,
+    total_token_count=959,
+    traffic_type=<TrafficType.ON_DEMAND: 'ON_DEMAND'>
+  )
+)
 ```
 
 Things worth noticing here that aren't visible from just calling
 `.text.strip()` in the code:
-- **`thoughts_token_count: 740`** — Gemini 2.5 Flash is a "thinking" model;
-  it spent 740 tokens reasoning internally before writing the 12-token
-  answer. That reasoning is billed (see `total_token_count: 1026`, which is
-  far larger than `prompt_token_count + candidates_token_count` alone)
-  even though this code never sees or prints it. This matters for cost —
-  see [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md).
+- **`thoughts_token_count=672`** — Gemini 2.5 Flash is a "thinking" model;
+  it spent 672 tokens reasoning internally before writing the 13-token
+  answer. That reasoning is billed (see `total_token_count=959`, far
+  larger than `prompt_token_count + candidates_token_count` alone) even
+  though this code never sees or prints it. This matters for cost — see
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). (The exact token
+  counts differ slightly from run to run even for a similar scene/prompt —
+  compare against the original SDK's capture, which had
+  `thoughts_token_count: 740` for the same prompt on a different frame;
+  the shape and the underlying cost dynamic are what matter, not the exact
+  numbers.)
 - **`prompt_tokens_details`** shows the image itself cost 258 tokens —
   images aren't free just because you're not sending text.
-- **`finish_reason: STOP`** is the "normal, complete answer" case. Other
+- **`finish_reason=STOP`** is the "normal, complete answer" case. Other
   values (`MAX_TOKENS`, `SAFETY`, etc.) would mean the response was cut off
   or blocked — the current code doesn't check this field at all, it just
   trusts `.text` exists.
+- **Structurally**, this is a Python object with a readable `repr()`
+  (dataclass-like), not the protobuf text format the old
+  `vertexai.generative_models` SDK printed — same information, different
+  presentation, and the field names carried over almost unchanged
+  (`thoughts_token_count`, `finish_reason`, etc.), which is why
+  `analyze_frame()`'s only change during the migration was how the client
+  and call are constructed, not how the result is read.
 
 ## 4. Roboflow — `InferenceHTTPClient.infer()`
 

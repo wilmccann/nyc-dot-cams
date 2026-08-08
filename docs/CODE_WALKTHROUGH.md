@@ -100,12 +100,11 @@ used to be two inline lines in `poll_camera`) specifically so `app.py`
 could wrap it in `asyncio.to_thread(fetch_frame, image_url)` — see the
 `app.py` section below for why that matters.
 
-### `build_vertex_model()` / `build_roboflow_client()`
+### `build_vertex_client()` / `build_roboflow_client()`
 
 ```python
-def build_vertex_model():
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    return GenerativeModel("gemini-2.5-flash")
+def build_vertex_client():
+    return genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 
 def build_roboflow_client():
     return InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=os.environ["ROBOFLOW_API_KEY"])
@@ -117,28 +116,40 @@ New in the extraction — previously this setup was inlined directly in
 iteration of their respective loops, so giving the construction its own
 named function meant `main.py`'s `poll_camera()` and `app.py`'s
 `rotation_loop()` could each call the same two lines instead of repeating
-Vertex AI's init dance and Roboflow's client setup independently.
+Vertex AI's client setup and Roboflow's client setup independently.
 
-### `analyze_frame(model, frame)`
+`build_vertex_client()` was rewritten once already, migrating off the
+deprecated `vertexai.generative_models` SDK (retiring June 24, 2026) onto
+the `google-genai` SDK — it originally called `vertexai.init(...)` and
+returned a `GenerativeModel("gemini-2.5-flash")`; now it returns a single
+`genai.Client(vertexai=True, ...)` that isn't tied to one model name. That
+shift — from "the client *is* a specific model" to "the client is generic,
+you name the model per call" — is why the model string moved from here
+into `analyze_frame()` below.
+
+### `analyze_frame(client, frame)`
 
 ```python
-def analyze_frame(model, frame):
-    image_part = Part.from_data(frame, mime_type="image/jpeg")
-    response = model.generate_content(
-        [image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."]
+def analyze_frame(client, frame):
+    image_part = Part.from_bytes(data=frame, mime_type="image/jpeg")
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."],
     )
     return response.text.strip()
 ```
 
-Takes an already-constructed `GenerativeModel` (from `build_vertex_model()`,
-called once) and raw JPEG bytes. `Part.from_data` wraps bytes for a
-multimodal prompt; the list `[image_part, "..."]` is "image, then text
-instruction," which is how you mix modalities in a single
-`generate_content` call.
+Takes an already-constructed client (from `build_vertex_client()`, called
+once) and raw JPEG bytes. `Part.from_bytes` wraps bytes for a multimodal
+prompt (the old SDK's near-identical `Part.from_data` renamed, part of the
+same migration mentioned above); the list `[image_part, "..."]` is "image,
+then text instruction," which is how you mix modalities in a single
+`generate_content` call — that part of the shape didn't change across the
+SDK migration.
 
 Only `.text` is used — the response object carries much more (token
 counts, finish reason, thinking-token counts). See
-[API_EXAMPLES.md](API_EXAMPLES.md#3-vertex-ai--generativemodelgenerate_content)
+[API_EXAMPLES.md](API_EXAMPLES.md#3-vertex-ai--clientmodelsgenerate_content)
 for the full shape and why that matters for cost.
 
 No check on `finish_reason` — if Gemini ever returns something other than
@@ -225,7 +236,7 @@ opened by mistake — every run gets a fresh file).
 
 The orchestration loop. Three things happen once, before the loop starts:
 1. `open_camera_viewer(all_cams, interval)` — opens the browser tab.
-2. `build_vertex_model()` — one Gemini client, reused every iteration.
+2. `build_vertex_client()` — one Gemini client, reused every iteration.
 3. `build_roboflow_client()` — one Roboflow client, reused every iteration.
 
 (These last two used to be inlined here directly; they now come from
@@ -293,7 +304,7 @@ Jobs/batch alternative.
 
 ```python
 async def rotation_loop():
-    model = build_vertex_model()
+    vertex_client = build_vertex_client()
     roboflow_client = build_roboflow_client()
     idx = 0
     while True:
@@ -302,7 +313,7 @@ async def rotation_loop():
         try:
             if image_url:
                 frame = await asyncio.to_thread(fetch_frame, image_url)
-                description = await asyncio.to_thread(analyze_frame, model, frame)
+                description = await asyncio.to_thread(analyze_frame, vertex_client, frame)
                 vehicles = await asyncio.to_thread(detect_vehicles, roboflow_client, frame)
                 async with state_lock:
                     state["camera"] = {...}

@@ -11,8 +11,8 @@ import os
 import cv2
 import numpy as np
 import requests
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
+from google import genai
+from google.genai.types import Part
 from inference_sdk import InferenceHTTPClient
 
 PROJECT_ID = "cloudrun-hack26nyc-4392"
@@ -46,10 +46,9 @@ def fetch_frame(image_url):
     return response.content
 
 
-def build_vertex_model():
-    """Initializes Vertex AI and returns a Gemini model client."""
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    return GenerativeModel("gemini-2.5-flash")
+def build_vertex_client():
+    """Builds a Google Gen AI SDK client targeting the Vertex AI backend."""
+    return genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
 
 
 def build_roboflow_client():
@@ -60,11 +59,12 @@ def build_roboflow_client():
     )
 
 
-def analyze_frame(model, frame):
+def analyze_frame(client, frame):
     """Sends a frame to Vertex AI Gemini for a one-sentence traffic description."""
-    image_part = Part.from_data(frame, mime_type="image/jpeg")
-    response = model.generate_content(
-        [image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."]
+    image_part = Part.from_bytes(data=frame, mime_type="image/jpeg")
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."],
     )
     return response.text.strip()
 

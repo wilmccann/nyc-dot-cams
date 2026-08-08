@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pipeline import (
     analyze_frame,
     build_roboflow_client,
-    build_vertex_model,
+    build_vertex_client,
     detect_vehicles,
     fetch_frame,
     filter_online_cameras,
@@ -38,7 +38,7 @@ state_lock = asyncio.Lock()
 
 
 async def rotation_loop():
-    model = build_vertex_model()
+    vertex_client = build_vertex_client()
     roboflow_client = build_roboflow_client()
 
     idx = 0
@@ -48,7 +48,7 @@ async def rotation_loop():
         try:
             if image_url:
                 frame = await asyncio.to_thread(fetch_frame, image_url)
-                description = await asyncio.to_thread(analyze_frame, model, frame)
+                description = await asyncio.to_thread(analyze_frame, vertex_client, frame)
                 vehicles = await asyncio.to_thread(detect_vehicles, roboflow_client, frame)
 
                 async with state_lock:
