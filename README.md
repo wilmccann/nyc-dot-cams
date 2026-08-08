@@ -9,6 +9,7 @@ every camera.
 
 - [Architecture overview](docs/ARCHITECTURE.md) — technologies, key APIs, module/data-flow diagram
 - [Runbook](docs/RUNBOOK.md) — setup, credentials, configuration, troubleshooting, Google Cloud Run and Roboflow explained
+- [Changelog](docs/CHANGELOG.md) — what was built, commit by commit
 
 ## Setup
 
