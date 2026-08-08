@@ -2,29 +2,20 @@
 
 Rotates through NYC DOT's public traffic cameras, analyzing each frame with
 Gemini for a scene description and Roboflow for vehicle detection, while a
-browser tab shows the live image alongside a map of every camera. Runs
-either as a local script (`main.py`) or as a Cloud Run web service
-(`app.py`) — see [Cloud Run service mode](#cloud-run-service-mode) below.
+browser tab shows the live image alongside a map of every camera.
 
-## Documentation
-
-- [Architecture overview](docs/ARCHITECTURE.md) — technologies, key APIs (including the ones this project now exposes itself), module/data-flow diagrams for both entry points
-- [Runbook](docs/RUNBOOK.md) — setup, credentials, configuration, troubleshooting, and the real Cloud Run deploy steps (including the IAM issues actually hit)
-- [Code walkthrough](docs/CODE_WALKTHROUGH.md) — function-by-function explanation of `pipeline.py`, `main.py`, and `app.py`, including the reasoning behind non-obvious decisions
-- [API examples](docs/API_EXAMPLES.md) — real captured request/response payloads from every external API, plus this project's own `/api/status`, so the code is understandable even without live Gemini/Roboflow access
-- [Production readiness](docs/PRODUCTION_READINESS.md) — honest gap analysis: cost, throughput, reliability, observability, security, testing
-- [Design: fully local deployment](docs/design/local-deployment.md) — proposal to replace Gemini and Roboflow with on-device models (not implemented)
-- [Design: Cloud Run deployment](docs/design/cloud-run-deployment.md) — the design `app.py` implements; **implemented and verified working on Cloud Run**, plus a not-implemented batch-pipeline alternative and an unresolved known limitation
-- [Changelog](docs/CHANGELOG.md) — what was built, commit by commit
+No GCP project or cloud hosting involved — just two API keys.
 
 ## Setup
 
-This project uses `uv` for dependency management. See the
-[Runbook](docs/RUNBOOK.md#credentials) for the full credential setup — two
-API keys (Gemini, Roboflow) in a `.env` file, no GCP project required.
-
 ```bash
 uv sync
+```
+
+Create `.env` in the project root:
+```
+GEMINI_API_KEY=...   # https://aistudio.google.com/apikey
+ROBOFLOW_API_KEY=...  # Roboflow dashboard → Settings → Roboflow API Keys
 ```
 
 ## Usage
@@ -32,67 +23,25 @@ uv sync
 ```bash
 uv run main.py
 ```
+(Or `uv run uvicorn main:app --port 8080` — equivalent; `main.py` just
+runs uvicorn itself when executed directly, so PyCharm's plain Run button
+works too.)
 
-Opens a browser tab (live camera image + map) and rotates through every
-online camera every 10 seconds, printing a Gemini description and Roboflow
-vehicle count for each in the terminal. `Ctrl+C` to stop.
+Then open `http://localhost:8080/`. Shows a random camera's image + map
+on load; click a different camera on the map to switch to it. Gemini and
+Roboflow are only called once per camera you actually select — not on a
+timer — since Gemini's free tier is capped at 20 requests/day. Local
+only; not deployed anywhere (see `overengineered` branch for the earlier
+Cloud Run version, and `git log` for the earlier continuously-polling
+version, both retired as more complexity/cost than they were worth for a
+personal project).
 
-### Cloud Run service mode
+## Project layout
 
-`app.py` is a FastAPI implementation of the design in
-[docs/design/cloud-run-deployment.md](docs/design/cloud-run-deployment.md):
-the image and map stay entirely client-side (unchanged from `main.py`'s
-viewer), while a background loop on the server runs the Gemini/Roboflow
-analysis — the only part that needs credentials — and exposes it at
-`/api/status` for the page to poll. **This has been deployed to Cloud Run
-and verified working end-to-end** — see
-[RUNBOOK.md](docs/RUNBOOK.md#google-cloud-run) for the exact deploy
-command, the IAM issues actually hit along the way, and how to tear it
-back down.
-
-Run it locally:
-```bash
-uv run uvicorn app:app --port 8080
-```
-Then open `http://localhost:8080/`.
-
-Deploy it:
-```bash
-./scripts/cloud-run-start.sh
-```
-Reads `GEMINI_API_KEY` and `ROBOFLOW_API_KEY` from `.env` and prints the
-deployed URL (update the project ID in the script first — see
-[Runbook](docs/RUNBOOK.md#google-cloud-run)). Check
-whether it's actually up (and whose background analysis loop is still
-running, not just that the container responds) with:
-```bash
-./scripts/cloud-run-status.sh
-```
-Open it in your browser — handles both the public and authenticated-only
-case (starting a local proxy automatically if needed):
-```bash
-./scripts/run-client.sh
-```
-See the [Runbook](docs/RUNBOOK.md#google-cloud-run) for what
-`--min-instances=1`/`--max-instances=1` are protecting against, and
-**don't leave a deployment running unattended** — it makes real,
-continuously-billed Gemini/Roboflow calls the whole time it's up:
-```bash
-./scripts/cloud-run-stop.sh
-```
-
-Known limitation, not yet fixed: each browser tab rotates its own
-displayed image independently of the server's single shared analysis
-loop, so the analysis panel can show a materially different camera than
-the one currently pictured — the page labels this explicitly rather than
-implying they're in sync. Root cause and three possible future fixes are
-detailed in
-[design/cloud-run-deployment.md](docs/design/cloud-run-deployment.md#known-limitation-found-during-implementation-image-and-analysis-can-point-at-different-cameras).
+- `pipeline.py` — NYC DOT / Gemini / Roboflow calls
+- `main.py` — the FastAPI server + browser UI
 
 ## Next Steps
 
-- [ ] Fix the image/analysis camera-mismatch limitation in `app.py` (see above).
-- [ ] Move `app.py`'s Gemini/Roboflow keys from `--set-env-vars` to Secret Manager for anything beyond a one-off verification deploy.
-- [ ] Update `scripts/cloud-run-*.sh` and `run-client.sh` to point at a real (non-hackathon-sandbox) GCP project.
 - [ ] Add CLI arguments for filtering by borough or camera name.
 - [ ] Save frames locally or stream to a visualization tool.

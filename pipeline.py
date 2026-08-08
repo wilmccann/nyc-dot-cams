@@ -1,10 +1,4 @@
-"""Shared camera-fetching and AI-analysis logic.
-
-Used by both main.py (local browser demo) and app.py (Cloud Run service) so
-the two entry points don't duplicate the NYC DOT / Gemini / Roboflow
-client code. See docs/CODE_WALKTHROUGH.md for the reasoning behind these
-functions.
-"""
+"""Shared camera-fetching and AI-analysis logic, used by main.py."""
 
 import os
 
