@@ -40,6 +40,7 @@ personal project).
 
 - `pipeline.py` — NYC DOT / Gemini / Roboflow calls
 - `main.py` — the FastAPI server + browser UI
+- [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md) — real captured responses for the two calls that haven't changed shape (NYC DOT, Roboflow)
 
 ## Next Steps
 
