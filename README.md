@@ -9,6 +9,10 @@ every camera.
 
 - [Architecture overview](docs/ARCHITECTURE.md) — technologies, key APIs, module/data-flow diagram
 - [Runbook](docs/RUNBOOK.md) — setup, credentials, configuration, troubleshooting, Google Cloud Run and Roboflow explained
+- [Code walkthrough](docs/CODE_WALKTHROUGH.md) — function-by-function explanation of `main.py`, including the reasoning behind non-obvious decisions
+- [API examples](docs/API_EXAMPLES.md) — real captured request/response payloads from every external API, so the code is understandable even without live Vertex AI/Roboflow access
+- [Production readiness](docs/PRODUCTION_READINESS.md) — honest gap analysis: cost, throughput, reliability, observability, security, testing
+- [Design: fully local deployment](docs/design/local-deployment.md) — proposal to replace Vertex AI and Roboflow with on-device models (not implemented)
 - [Changelog](docs/CHANGELOG.md) — what was built, commit by commit
 
 ## Setup
