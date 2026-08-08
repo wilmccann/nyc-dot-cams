@@ -224,24 +224,38 @@ real production deployment — fine for a one-off verification, not for
 something staying up long-term with secrets visible in the service's
 revision config.
 
-### Verifying it after deploy
+### Opening it in a browser: `scripts/cloud-run-open.sh`
 
 Since it's deployed authenticated-only by default, a plain browser tab
-can't load it (no way to attach an auth header via navigation). Two ways
-to check it:
+can't load it directly (no way to attach an auth header via navigation).
+`./scripts/cloud-run-open.sh` handles this either way: if the service is
+public (see [Making it publicly reachable](#making-it-publicly-reachable)),
+it opens the URL directly; if not, it starts
+`gcloud run services proxy` in the background (reusing one already
+running, tracked via `/tmp/nyc-dot-cams-cloud-run-proxy.pid`, rather than
+piling up duplicate proxies if run more than once) and opens the local
+proxied URL instead. The manual equivalent for the private case:
 
-**Authenticated proxy** (keeps it private):
 ```bash
 gcloud run services proxy nyc-dot-cams --region us-central1 --project cloudrun-hack26nyc-4392 --port 8081
 ```
 Then open `http://127.0.0.1:8081/` normally — the proxy attaches your
 `gcloud` identity token for you.
 
+### Verifying it after deploy
+
 **Direct curl with an identity token:**
 ```bash
 TOKEN=$(gcloud auth print-identity-token)
 curl -H "Authorization: Bearer $TOKEN" https://nyc-dot-cams-696207924611.us-central1.run.app/api/status
 ```
+
+**Or just:** `./scripts/cloud-run-status.sh` — does the token/curl dance
+above automatically, and checks more than "does it respond": it reads
+`/api/status`'s `updated_at` and warns if the last analysis is more than
+60 seconds old, since a `200` from `GET /` only proves the container is
+up, not that `rotation_loop()`'s background task is still alive. Reports
+clearly if the service isn't deployed at all, too.
 
 ### Making it publicly reachable
 

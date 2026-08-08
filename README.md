@@ -62,11 +62,21 @@ Deploy it:
 ```bash
 ./scripts/cloud-run-start.sh
 ```
-Reads `ROBOFLOW_API_KEY` from `.env` and prints the deployed URL. See the
-[Runbook](docs/RUNBOOK.md#google-cloud-run) for what `--min-instances=1`/
-`--max-instances=1` are protecting against, and **don't leave a deployment
-running unattended** — it makes real, continuously-billed Vertex AI/Roboflow
-calls the whole time it's up:
+Reads `ROBOFLOW_API_KEY` from `.env` and prints the deployed URL. Check
+whether it's actually up (and whose background analysis loop is still
+running, not just that the container responds) with:
+```bash
+./scripts/cloud-run-status.sh
+```
+Open it in your browser — handles both the public and authenticated-only
+case (starting a local proxy automatically if needed):
+```bash
+./scripts/cloud-run-open.sh
+```
+See the [Runbook](docs/RUNBOOK.md#google-cloud-run) for what
+`--min-instances=1`/`--max-instances=1` are protecting against, and
+**don't leave a deployment running unattended** — it makes real,
+continuously-billed Vertex AI/Roboflow calls the whole time it's up:
 ```bash
 ./scripts/cloud-run-stop.sh
 ```
