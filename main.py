@@ -1,60 +1,22 @@
 import json
-import os
-import requests
 import tempfile
 import time
-import sys
 import webbrowser
 
-import cv2
-import numpy as np
-import vertexai
+import requests
 from dotenv import load_dotenv
-from vertexai.generative_models import GenerativeModel, Part
-from inference_sdk import InferenceHTTPClient
+
+from pipeline import (
+    analyze_frame,
+    build_roboflow_client,
+    build_vertex_model,
+    detect_vehicles,
+    fetch_frame,
+    filter_online_cameras,
+    get_cameras,
+)
 
 load_dotenv()
-
-PROJECT_ID = "cloudrun-hack26nyc-4392"
-LOCATION = "us-central1"
-
-ROBOFLOW_API_URL = "https://serverless.roboflow.com"
-ROBOFLOW_MODEL_ID = "vehicle-detection-3mmwj/1"
-
-def get_cameras():
-    """Fetches all cameras from the NYC DOT API."""
-    url = "https://webcams.nyctmc.org/api/cameras"
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
-        print(f"Error fetching cameras: {e}")
-        return []
-
-def filter_online_cameras(cameras):
-    """Filters for cameras that are currently online."""
-    return [c for c in cameras if str(c.get("isOnline")).lower() == "true"]
-
-def analyze_frame(model, frame):
-    """Sends a frame to Vertex AI Gemini for a one-sentence traffic description."""
-    image_part = Part.from_data(frame, mime_type="image/jpeg")
-    response = model.generate_content(
-        [image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."]
-    )
-    return response.text.strip()
-
-def detect_vehicles(roboflow_client, frame):
-    """Runs Roboflow object detection on a frame and summarizes counts by class."""
-    image = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
-    result = roboflow_client.infer(image, model_id=ROBOFLOW_MODEL_ID)
-    predictions = result.get("predictions", [])
-    counts = {}
-    for pred in predictions:
-        counts[pred["class"]] = counts.get(pred["class"], 0) + 1
-    if not counts:
-        return "no vehicles detected"
-    return ", ".join(f"{count} {cls}" for cls, count in sorted(counts.items()))
 
 def open_camera_viewer(all_cams, interval):
     """Opens a local HTML page that rotates through all_cams every interval seconds,
@@ -132,7 +94,7 @@ setInterval(function() {{
 </body>
 </html>"""
     fd, path = tempfile.mkstemp(suffix=".html")
-    with os.fdopen(fd, "w") as f:
+    with open(path, "w") as f:
         f.write(html)
     webbrowser.open(f"file://{path}")
 
@@ -143,13 +105,8 @@ def poll_camera(all_cams, interval=10):
 
     open_camera_viewer(all_cams, interval)
 
-    vertexai.init(project=PROJECT_ID, location=LOCATION)
-    model = GenerativeModel("gemini-2.5-flash")
-
-    roboflow_client = InferenceHTTPClient(
-        api_url=ROBOFLOW_API_URL,
-        api_key=os.environ["ROBOFLOW_API_KEY"],
-    )
+    model = build_vertex_model()
+    roboflow_client = build_roboflow_client()
 
     idx = 0
     try:
@@ -158,9 +115,7 @@ def poll_camera(all_cams, interval=10):
             image_url = cam.get("imageUrl")
             try:
                 if image_url:
-                    response = requests.get(image_url)
-                    response.raise_for_status()
-                    frame = response.content
+                    frame = fetch_frame(image_url)
 
                     description = analyze_frame(model, frame)
                     vehicles = detect_vehicles(roboflow_client, frame)
@@ -181,7 +136,7 @@ def poll_camera(all_cams, interval=10):
 def main():
     print("Fetching NYC DOT cameras...")
     cams = get_cameras()
-    
+
     online = filter_online_cameras(cams)
     print(f"Found {len(cams)} total cameras, {len(online)} online.")
 

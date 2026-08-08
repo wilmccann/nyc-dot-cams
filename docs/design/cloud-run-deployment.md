@@ -1,9 +1,14 @@
 # Design: Deploying to Google Cloud Run
 
-**Status:** Draft — not implemented. This is a proposal to design against,
-not a plan someone has committed to building. See
-[local-deployment.md](local-deployment.md) for the companion "remove all
-cloud dependencies" design — the two are independent and not meant to be
+**Status:** The Recommended option below has been **implemented (`app.py`,
+`pipeline.py`, `Dockerfile`) and verified deployed on Cloud Run** — see
+[RUNBOOK.md](../RUNBOOK.md#google-cloud-run) for the real deploy steps and
+[CODE_WALKTHROUGH.md](../CODE_WALKTHROUGH.md#apppy--cloud-run-service) for
+how the code works. The [known limitation](#known-limitation-found-during-implementation-image-and-analysis-can-point-at-different-cameras)
+found during implementation remains unresolved. The Alternative
+(Jobs + Scheduler) below is still just a proposal, not built. See
+[local-deployment.md](local-deployment.md) for the separate, independent
+"remove all cloud dependencies" design — the two are not meant to be
 combined.
 
 ## Problem
@@ -240,6 +245,111 @@ Two additive costs, not one:
    continuous one** — worth deciding on a budget cap or a
    stop/start schedule (e.g., scale `min-instances` to 0 outside demo
    hours via a Cloud Scheduler job) rather than letting it run unbounded.
+
+### Known limitation (found during implementation): image and analysis can point at different cameras
+
+**Status: unresolved, tracked here as a future enhancement, not fixed in
+the initial implementation.**
+
+#### Root cause
+
+Two independent, uncoordinated timers decide "what camera" at any given
+moment:
+
+- **The browser's image rotation** is a `setInterval` in the page's own
+  JS, started the instant that browser tab loads `render_viewer_page()`'s
+  HTML. It walks the embedded `cameras` array using an index that lives
+  only in that tab's memory.
+- **The server's analysis rotation** is `rotation_loop()`, a single
+  `asyncio` task started once at server startup (`lifespan`), walking the
+  same `all_cameras` list independently, at the same 10s interval, but on
+  its own clock and its own index.
+
+Both loops iterate the *same ordered list* at the *same interval*, which
+makes it easy to assume they'd track each other the way the original
+local `main.py` version's two loops roughly do (see
+[ARCHITECTURE.md](../ARCHITECTURE.md#important-design-note-two-independent-rotation-loops)).
+They don't, for a reason specific to the Service architecture: in
+`main.py`, there is exactly one Python process and one browser tab,
+started within milliseconds of each other, so "roughly in sync, drifting
+slowly" is a fair description. In `app.py`, the server loop starts once,
+at deploy/cold-start time — but every browser tab that opens the page
+afterward starts its *own* image rotation from index 0 at whatever moment
+*it* happened to load. Two tabs opened five minutes apart show completely
+different images at any instant, and neither is likely to line up with
+wherever the single server loop currently is. This isn't clock drift
+around a shared starting point; there was never a shared starting point.
+
+#### Concrete impact
+
+Open the deployed page, watch the "Server analysis" panel and the
+pictured camera above it for a minute: the panel will report on a camera
+name that frequently doesn't match the `<h2>` title over the image. The
+UI now says this explicitly (`"may be a different camera than pictured
+above"`) rather than implying simple lag, but that's a disclosure, not a
+fix — the actual product experience is "the description you're reading is
+often not about the picture you're looking at."
+
+#### Why "just poll faster" doesn't fix it
+
+Reducing the client's `pollStatus()` interval (currently 5s) only reduces
+how *stale* the displayed analysis is relative to the server's own
+rotation — it does nothing to align *which camera* the server is
+currently on with *which camera* any given tab is currently displaying,
+since those two indices are computed completely independently. Polling
+frequency and synchronization are different problems.
+
+#### Future fix options
+
+1. **Make the server authoritative for image display too (simplest).**
+   Drop the client's independent `setInterval`/index entirely. Instead,
+   have `pollStatus()` set `camImg.src` to `state.camera`'s `imageUrl`
+   directly — the image and the analysis both come from whatever the
+   server's single loop currently says is "current." Every viewer sees
+   the *same* camera at the *same* time, which for a shared demo is
+   arguably the more intuitive behavior anyway ("everyone's watching the
+   same feed" rather than "everyone's on their own independent tour").
+   Tradeoff: image updates now happen only as often as the server
+   rotates (10s) and only one camera is ever visible fleet-wide at a
+   time — the current "each tab can browse independently" feel goes away.
+   Cheapest option to build: no new endpoints, just deleting client-side
+   rotation code and repointing `camImg.src`.
+
+2. **On-demand, per-camera analysis with short-TTL caching.** Let each
+   client's independent image rotation stay exactly as it is today, and
+   change `/api/status` to accept the currently-displayed camera's ID
+   (e.g. `/api/status?camera_id=...`), analyzing *that* camera on request
+   instead of whatever a background loop happens to be on. To avoid
+   paying for a fresh Gemini/Roboflow call on every single poll from every
+   viewer, cache each camera's result for a few seconds (in-memory dict
+   keyed by camera ID, same `state_lock` pattern, entries expired after
+   e.g. 15s) so simultaneous viewers on the same camera share one
+   analysis. Preserves today's "browse independently" feel exactly.
+   Tradeoff: real implementation complexity (cache eviction, and a cache
+   stampede if many viewers are on different cameras at once means many
+   concurrent Gemini/Roboflow calls — could exceed the cost model this
+   design assumed, since spend now scales with *distinct cameras being
+   viewed*, not a fixed rotation rate).
+
+3. **Push instead of poll (WebSocket or Server-Sent Events).** Same
+   authoritative-server model as option 1, but instead of the client
+   polling `/api/status` every 5s, the server pushes an update the moment
+   `rotation_loop()` advances. Removes polling latency/staleness entirely
+   and is the "correct" real-time architecture, at the cost of the most
+   implementation work of the three (connection lifecycle management,
+   reconnection handling, FastAPI's WebSocket/SSE support instead of a
+   plain REST endpoint).
+
+**Recommendation for whoever picks this up:** start with option 1. It's
+the smallest change, it's honest about the single-shared-loop cost model
+this whole design already commits to (see `--max-instances=1` above —
+this design already accepted "one authoritative rotation loop," option 1
+just extends that same decision to the image, rather than introducing a
+second axis of independence that fights it), and it can evolve into
+option 3 later (push instead of poll) without changing the "server is
+authoritative" model. Option 2 is worth it only if "each viewer browses
+independently" turns out to matter more than the cost predictability of a
+single shared rotation rate.
 
 ## Alternative: Cloud Run Jobs + Cloud Scheduler
 
