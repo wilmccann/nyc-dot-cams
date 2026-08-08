@@ -11,6 +11,18 @@ found during implementation remains unresolved. The Alternative
 "remove all cloud dependencies" design — the two are not meant to be
 combined.
 
+**Update, after this doc was written:** the hackathon GCP account this
+design was built and verified against was later deleted, and Gemini
+access was switched from Vertex AI to the direct Gemini Developer API
+(a plain key, no GCP project involved — see
+[RUNBOOK.md](../RUNBOOK.md#setting-up-the-gemini-key)). Most of this doc,
+including the diagram below, still describes the Vertex AI architecture
+that was actually verified — it's left as an accurate historical record
+of what was built and tested, not a stale error. The
+[Credentials](#credentials) section specifically is the one part that no
+longer reflects what a redeploy would need; read it as "what the IAM
+story used to be," not current guidance.
+
 ## Problem
 
 `main.py` runs as a local script: an infinite polling loop, a browser tab
@@ -205,6 +217,11 @@ Two flags here are load-bearing, not defaults to accept blindly:
   ever needs to serve meaningfully concurrent traffic.
 
 ### Credentials
+
+*(Historical — describes the Vertex AI IAM plan that was actually
+verified. Current guidance: `GEMINI_API_KEY` alongside `ROBOFLOW_API_KEY`,
+both via `--set-env-vars`/Secret Manager, no IAM role needed at all — see
+[RUNBOOK.md](../RUNBOOK.md#credentials-on-cloud-run).)*
 
 - A dedicated service account for the Cloud Run service, granted
   `roles/aiplatform.user` — no JSON key file, no ADC file; Cloud Run

@@ -17,7 +17,7 @@ points sharing one core module**:
   the design and [RUNBOOK.md](RUNBOOK.md#google-cloud-run) for the actual
   deploy steps and the two IAM issues hit along the way.
 
-Both import their NYC DOT / Vertex AI / Roboflow logic from **`pipeline.py`**
+Both import their NYC DOT / Gemini / Roboflow logic from **`pipeline.py`**
 rather than duplicating it — see [Module map](#module-map) below.
 
 ## Technologies
@@ -27,10 +27,10 @@ rather than duplicating it — see [Module map](#module-map) below.
 | Language / runtime | Python 3.12+ | `requires-python = ">=3.12"` in `pyproject.toml` |
 | Dependency management | [`uv`](https://docs.astral.sh/uv/) | Fast resolver, lockfile (`uv.lock`) committed for reproducible installs |
 | Camera data source | NYC DOT Camera API (`webcams.nyctmc.org`) | Public, unauthenticated, no key needed |
-| Scene description | Google Vertex AI — Gemini 2.5 Flash | Multimodal (image → text) description of traffic conditions |
+| Scene description | Google Gemini (`gemini-flash-latest`), direct API, not Vertex AI | Multimodal (image → text) description of traffic conditions; see [RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key) for why it's not Vertex AI |
 | Object detection | Roboflow hosted inference (serverless) | Vehicle detection/counting on the same frame |
 | Image decoding | OpenCV (`cv2`) + NumPy | Roboflow's SDK needs a decoded array, not raw JPEG bytes |
-| Credentials | Google ADC (`gcloud auth application-default login`) + `.env` (Roboflow key) | See [RUNBOOK.md](RUNBOOK.md#credentials) |
+| Credentials | `.env` (`GEMINI_API_KEY` + `ROBOFLOW_API_KEY`) — no GCP project needed | See [RUNBOOK.md](RUNBOOK.md#credentials) |
 | Browser viewer (`main.py`) | Static local HTML file, opened via stdlib `webbrowser` | No web server — just a `file://` page |
 | Browser viewer (`app.py`) | Same HTML/JS, served over HTTP | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) ASGI server |
 | Map | [Leaflet.js](https://leafletjs.com/) + OpenStreetMap tiles, loaded from CDN inside the served/generated page | Free, no API key; NYC DOT's own map page can't be iframed (`X-Frame-Options: DENY`) |
@@ -45,8 +45,8 @@ rather than duplicating it — see [Module map](#module-map) below.
 2. **`GET https://webcams.nyctmc.org/api/cameras/{id}/image`**
    Returns the current JPEG frame for one camera. Called every rotation tick — once from Python (for analysis) and independently, on a separate timer, from the browser tab's JS (for display).
 
-3. **Vertex AI `generateContent`** (via the `google-genai` SDK's `client.models.generate_content()`)
-   `projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent`
+3. **Gemini `generateContent`** (via the `google-genai` SDK's `client.models.generate_content()`, direct API — not Vertex AI)
+   `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent`
    Sends the JPEG bytes + a text prompt, gets back a one-sentence traffic description.
 
 4. **Roboflow serverless inference** (via `inference_sdk.InferenceHTTPClient`)
@@ -71,7 +71,7 @@ for real captured examples:
 ## Module map
 
 Shared logic lives in **`pipeline.py`**: `get_cameras()`,
-`filter_online_cameras()`, `fetch_frame()`, `build_vertex_client()`,
+`filter_online_cameras()`, `fetch_frame()`, `build_gemini_client()`,
 `build_roboflow_client()`, `analyze_frame()`, `detect_vehicles()`. Neither
 entry point defines these itself.
 
@@ -91,7 +91,7 @@ flowchart TB
     subgraph "pipeline.py (shared, imported by both)"
         P1["get_cameras() / filter_online_cameras()"]
         P2["fetch_frame()"]
-        P3["analyze_frame() — Vertex AI"]
+        P3["analyze_frame() — Gemini"]
         P4["detect_vehicles() — Roboflow"]
     end
 
@@ -116,7 +116,7 @@ flowchart TB
 
     P2 --> P3
     P2 --> P4
-    P3 -.->|HTTPS| V[(Vertex AI)]
+    P3 -.->|HTTPS| V[(Gemini API)]
     P4 -.->|HTTPS| R[(Roboflow)]
     P2b -.->|HTTPS| N1[(NYC DOT images)]
     P2c -.->|HTTPS| N2[(NYC DOT images)]

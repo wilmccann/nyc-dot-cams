@@ -1,27 +1,27 @@
 # NYC DOT Camera Pipeline
 
 Rotates through NYC DOT's public traffic cameras, analyzing each frame with
-Vertex AI (Gemini) for a scene description and Roboflow for vehicle
-detection, while a browser tab shows the live image alongside a map of
-every camera. Runs either as a local script (`main.py`) or as a Cloud Run
-web service (`app.py`) — see [Cloud Run service mode](#cloud-run-service-mode) below.
+Gemini for a scene description and Roboflow for vehicle detection, while a
+browser tab shows the live image alongside a map of every camera. Runs
+either as a local script (`main.py`) or as a Cloud Run web service
+(`app.py`) — see [Cloud Run service mode](#cloud-run-service-mode) below.
 
 ## Documentation
 
 - [Architecture overview](docs/ARCHITECTURE.md) — technologies, key APIs (including the ones this project now exposes itself), module/data-flow diagrams for both entry points
 - [Runbook](docs/RUNBOOK.md) — setup, credentials, configuration, troubleshooting, and the real Cloud Run deploy steps (including the IAM issues actually hit)
 - [Code walkthrough](docs/CODE_WALKTHROUGH.md) — function-by-function explanation of `pipeline.py`, `main.py`, and `app.py`, including the reasoning behind non-obvious decisions
-- [API examples](docs/API_EXAMPLES.md) — real captured request/response payloads from every external API, plus this project's own `/api/status`, so the code is understandable even without live Vertex AI/Roboflow access
+- [API examples](docs/API_EXAMPLES.md) — real captured request/response payloads from every external API, plus this project's own `/api/status`, so the code is understandable even without live Gemini/Roboflow access
 - [Production readiness](docs/PRODUCTION_READINESS.md) — honest gap analysis: cost, throughput, reliability, observability, security, testing
-- [Design: fully local deployment](docs/design/local-deployment.md) — proposal to replace Vertex AI and Roboflow with on-device models (not implemented)
+- [Design: fully local deployment](docs/design/local-deployment.md) — proposal to replace Gemini and Roboflow with on-device models (not implemented)
 - [Design: Cloud Run deployment](docs/design/cloud-run-deployment.md) — the design `app.py` implements; **implemented and verified working on Cloud Run**, plus a not-implemented batch-pipeline alternative and an unresolved known limitation
 - [Changelog](docs/CHANGELOG.md) — what was built, commit by commit
 
 ## Setup
 
 This project uses `uv` for dependency management. See the
-[Runbook](docs/RUNBOOK.md#credentials) for the full credential setup
-(Google Vertex AI + Roboflow API key).
+[Runbook](docs/RUNBOOK.md#credentials) for the full credential setup — two
+API keys (Gemini, Roboflow) in a `.env` file, no GCP project required.
 
 ```bash
 uv sync
@@ -30,7 +30,6 @@ uv sync
 ## Usage
 
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=~/keys/google-key.json
 uv run main.py
 ```
 
@@ -53,7 +52,6 @@ back down.
 
 Run it locally:
 ```bash
-export GOOGLE_APPLICATION_CREDENTIALS=~/keys/google-key.json
 uv run uvicorn app:app --port 8080
 ```
 Then open `http://localhost:8080/`.
@@ -62,7 +60,9 @@ Deploy it:
 ```bash
 ./scripts/cloud-run-start.sh
 ```
-Reads `ROBOFLOW_API_KEY` from `.env` and prints the deployed URL. Check
+Reads `GEMINI_API_KEY` and `ROBOFLOW_API_KEY` from `.env` and prints the
+deployed URL (update the project ID in the script first — see
+[Runbook](docs/RUNBOOK.md#google-cloud-run)). Check
 whether it's actually up (and whose background analysis loop is still
 running, not just that the container responds) with:
 ```bash
@@ -76,7 +76,7 @@ case (starting a local proxy automatically if needed):
 See the [Runbook](docs/RUNBOOK.md#google-cloud-run) for what
 `--min-instances=1`/`--max-instances=1` are protecting against, and
 **don't leave a deployment running unattended** — it makes real,
-continuously-billed Vertex AI/Roboflow calls the whole time it's up:
+continuously-billed Gemini/Roboflow calls the whole time it's up:
 ```bash
 ./scripts/cloud-run-stop.sh
 ```
@@ -92,6 +92,7 @@ detailed in
 ## Next Steps
 
 - [ ] Fix the image/analysis camera-mismatch limitation in `app.py` (see above).
-- [ ] Move `app.py`'s Roboflow key from `--set-env-vars` to Secret Manager for anything beyond a one-off verification deploy.
+- [ ] Move `app.py`'s Gemini/Roboflow keys from `--set-env-vars` to Secret Manager for anything beyond a one-off verification deploy.
+- [ ] Update `scripts/cloud-run-*.sh` and `run-client.sh` to point at a real (non-hackathon-sandbox) GCP project.
 - [ ] Add CLI arguments for filtering by borough or camera name.
 - [ ] Save frames locally or stream to a visualization tool.

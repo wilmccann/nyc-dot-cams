@@ -22,44 +22,66 @@ inform prioritization.
 
 ## Cost: the thinking-token problem
 
-Captured from a real call (see [API_EXAMPLES.md](API_EXAMPLES.md#3-vertex-ai--clientmodelsgenerate_content)):
+**Updated 2026-08-08 after switching from Vertex AI to the direct Gemini
+API** (see [RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key)) — the
+numbers below are current for that setup, but this section has already
+gone stale once (pricing and even which model actually answers can change
+under this project's feet, see the note on `gemini-flash-latest` below),
+so treat it as a method to re-run, not a fixed conclusion.
+
+Captured from a real call (see [API_EXAMPLES.md](API_EXAMPLES.md#3-gemini--clientmodelsgenerate_content)):
 
 ```
-prompt_token_count: 274      (input: the image + instruction)
-candidates_token_count: 12   (the actual one-sentence answer)
-thoughts_token_count: 740    (internal reasoning — never seen or used)
-total_token_count: 1026
+prompt_token_count: 1097     (input: the image + instruction)
+candidates_token_count: 25   (the actual one-sentence answer)
+thoughts_token_count: 178    (internal reasoning — never seen or used)
+total_token_count: 1300
 ```
 
-Gemini 2.5 Flash pricing (Vertex AI, standard tier, checked 2026-08-08):
-**$0.30 / 1M input tokens**, **$2.50 / 1M output tokens** — and Google
-bills reasoning tokens at the *output* rate, lumped in as "response and
-reasoning." So this one call cost approximately:
+Gemini API pricing for `gemini-3.6-flash` — the model `gemini-flash-latest`
+currently resolves to (paid tier, checked 2026-08-08): **$1.50 / 1M input
+tokens**, **$7.50 / 1M output tokens** (up from $0.30/$2.50 on the
+`gemini-2.5-flash` this project used on Vertex AI — the per-token price
+more than doubled, though `thoughts_token_count` also dropped
+substantially in this capture, 178 vs. 672–740 before, partially
+offsetting it). So this one call cost approximately:
 
 ```
-input:  274 tokens × $0.30 / 1,000,000 ≈ $0.00008
-output: (12 + 740) tokens × $2.50 / 1,000,000 ≈ $0.00188
-                                        total ≈ $0.002 per call
+input:  1097 tokens × $1.50 / 1,000,000 ≈ $0.00165
+output: (25 + 178) tokens × $7.50 / 1,000,000 ≈ $0.00152
+                                        total ≈ $0.003 per call
 ```
 
-That looks negligible per call — until you account for the loop having no
-pause and no daily cap. At a ~10s interval plus processing overhead
-(call it 11s/cycle), that's roughly `86400 / 11 ≈ 7,850` Gemini calls per
-day if left running continuously, or **~$15/day (~$460/month)** — for a
-one-sentence description whose 740-token reasoning process is never read
-by anything. (This is a rough estimate from one sample call; actual token
-counts vary by scene complexity and description length. Roboflow's
-serverless pricing is credit-based and not publicly itemized per call —
-check current consumption in the Roboflow dashboard rather than assuming
-it's free at volume.)
+At the same continuous-operation math as before (~10s interval + overhead
+≈ 11s/cycle ≈ 7,850 calls/day), that's **~$24/day (~$730/month) on the
+paid tier** if left running continuously — higher than the original
+Vertex AI estimate, not lower, despite the lower reasoning-token count.
+
+**There is a free tier for the direct Gemini API** (unlike Vertex AI,
+which always bills) — but its exact requests-per-day limit wasn't pinned
+down precisely here, and 7,850 calls/day run continuously is almost
+certainly well beyond any free daily quota regardless of the exact
+number; free-tier headroom likely only covers short, occasional runs of
+this app, not "leave it running." Check current limits at
+[ai.google.dev/gemini-api/docs/rate-limits](https://ai.google.dev/gemini-api/docs/rate-limits)
+before assuming continuous operation is free.
+
+(All of the above, on both backends, is a rough estimate from one sample
+call — actual token counts vary by scene complexity, description length,
+and which model an alias like `gemini-flash-latest` happens to resolve to
+on a given day. Roboflow's serverless pricing is separately credit-based
+and not itemized per call — check current consumption in the Roboflow
+dashboard.)
 
 **None of this is enforced anywhere in the code.** There's no budget
 alert, no daily call cap, no cheaper-model fallback, and no way for the
 process itself to know it's spending money. Cheapest fixes, roughly in
 order of effort: switch off "thinking" for this task (Gemini has a
 `thinking_budget` / low-reasoning-effort setting for exactly this kind of
-short factual task), add a max-calls-per-day guard, and set up a GCP
-budget alert on the project.
+short factual task), pin a specific model instead of the `-latest` alias
+if predictable cost matters more than always getting the newest model,
+add a max-calls-per-day guard, and set up a billing budget alert if using
+the paid tier.
 
 ## Throughput — the "963 camera" problem
 
@@ -73,8 +95,8 @@ seconds, but that's one camera, not the fleet.
 
 Fixes depend on the actual goal:
 - **Fewer cameras, tighter loop** — if only a handful of corridors matter, drop the rotation entirely and poll just those cameras every 10s. Simplest fix, no architecture change.
-- **Concurrency** — run N cameras in parallel (`asyncio` + `httpx`, or a thread pool) so a full pass takes `963/N × 11s` instead of `963 × 11s`. Raises the cost-per-minute proportionally (see above) and adds real concurrency bugs to worry about (shared `roboflow_client`/`model` objects, rate limits on the Vertex AI / Roboflow side).
-- **Batch/async inference** — Vertex AI and Roboflow both offer batch APIs at lower per-token/per-call cost for non-interactive workloads; not a fit for "live rotating demo" but worth knowing about if this becomes a nightly batch job instead of a live loop.
+- **Concurrency** — run N cameras in parallel (`asyncio` + `httpx`, or a thread pool) so a full pass takes `963/N × 11s` instead of `963 × 11s`. Raises the cost-per-minute proportionally (see above) and adds real concurrency bugs to worry about (shared `roboflow_client`/`model` objects, rate limits on the Gemini / Roboflow side).
+- **Batch/async inference** — Gemini and Roboflow both offer batch APIs at lower per-token/per-call cost for non-interactive workloads; not a fit for "live rotating demo" but worth knowing about if this becomes a nightly batch job instead of a live loop.
 
 ## Reliability
 
@@ -88,7 +110,7 @@ Fixes depend on the actual goal:
   demo, but a transient network blip in production would mean silently
   missing that camera's data for a full rotation cycle rather than
   retrying once.
-- **No circuit breaker.** If Vertex AI or Roboflow starts failing
+- **No circuit breaker.** If Gemini or Roboflow starts failing
   consistently (outage, expired credentials, quota exceeded), the loop
   keeps calling them every cycle forever rather than backing off or
   alerting.
@@ -106,15 +128,25 @@ Cloud Logging if this stays on GCP.
 
 ## Secrets in production
 
-Current setup — Application Default Credentials as a JSON file in
-`~/keys/`, Roboflow key in a local `.env` — is appropriate for a laptop
-and explicitly *not* how you'd run this as a deployed service. In
-production this would move to:
-- **Workload Identity** (if running on GKE/Cloud Run) instead of any
-  credentials file at all — the compute identity gets Vertex AI access
-  directly, no key to leak.
-- **Secret Manager** for the Roboflow key, injected as an env var at
-  deploy time, not committed to a `.env` file sitting on a filesystem.
+Current setup — `GEMINI_API_KEY` and `ROBOFLOW_API_KEY` in a local `.env`
+(or `--set-env-vars` on the Cloud Run deploy) — is appropriate for a
+laptop or a one-off verification deploy, and explicitly *not* how you'd
+want either key sitting for a long-running production service: env vars
+are visible in the Cloud Run revision's config to anyone with read access
+to the service, and there's no rotation story. In production this would
+move to **Secret Manager** for both keys, injected at deploy time instead
+of passed as plain `--set-env-vars` — see
+[design/cloud-run-deployment.md](design/cloud-run-deployment.md) for
+where that's already flagged as a known gap in the verification deploy.
+
+This is simpler than it used to be. The original setup used Application
+Default Credentials (a JSON file in `~/keys/`) for Vertex AI, which on
+Cloud Run would have meant either Workload Identity (the compute identity
+gets Vertex AI access directly) or a downloaded service-account key —
+real IAM surface to get right. Switching Gemini access from Vertex AI to
+a plain API key ([RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key))
+collapsed that entirely: it's now the same "one more Secret Manager
+entry" story as Roboflow already was, not a separate IAM concern.
 
 ## Unescaped camera names in generated HTML
 
@@ -145,7 +177,7 @@ No automated tests exist. Nothing here needs live API access to test —
 counting/grouping logic, and the HTML-generation logic in
 `open_camera_viewer()` are all pure functions of their inputs and could be
 unit tested against the captured examples in
-[API_EXAMPLES.md](API_EXAMPLES.md) as fixtures — no Vertex AI or Roboflow
+[API_EXAMPLES.md](API_EXAMPLES.md) as fixtures — no Gemini or Roboflow
 account needed to test them, which also means these tests would still work
 after the current demo credentials expire.
 

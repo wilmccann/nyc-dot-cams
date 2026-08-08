@@ -1,7 +1,7 @@
 """Shared camera-fetching and AI-analysis logic.
 
 Used by both main.py (local browser demo) and app.py (Cloud Run service) so
-the two entry points don't duplicate the NYC DOT / Vertex AI / Roboflow
+the two entry points don't duplicate the NYC DOT / Gemini / Roboflow
 client code. See docs/CODE_WALKTHROUGH.md for the reasoning behind these
 functions.
 """
@@ -14,9 +14,6 @@ import requests
 from google import genai
 from google.genai.types import Part
 from inference_sdk import InferenceHTTPClient
-
-PROJECT_ID = "cloudrun-hack26nyc-4392"
-LOCATION = "us-central1"
 
 ROBOFLOW_API_URL = "https://serverless.roboflow.com"
 ROBOFLOW_MODEL_ID = "vehicle-detection-3mmwj/1"
@@ -46,9 +43,10 @@ def fetch_frame(image_url):
     return response.content
 
 
-def build_vertex_client():
-    """Builds a Google Gen AI SDK client targeting the Vertex AI backend."""
-    return genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+def build_gemini_client():
+    """Builds a Google Gen AI SDK client using a direct Gemini API key
+    (not Vertex AI) — no GCP project, billing, or IAM required."""
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 def build_roboflow_client():
@@ -60,10 +58,10 @@ def build_roboflow_client():
 
 
 def analyze_frame(client, frame):
-    """Sends a frame to Vertex AI Gemini for a one-sentence traffic description."""
+    """Sends a frame to Gemini for a one-sentence traffic description."""
     image_part = Part.from_bytes(data=frame, mime_type="image/jpeg")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-flash-latest",
         contents=[image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."],
     )
     return response.text.strip()

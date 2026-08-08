@@ -2,11 +2,15 @@
 
 These are **real, captured responses** from every external API this project
 calls, taken on **2026-08-08** against the camera "Central Park West @ 86 St".
-They exist because the two paid/gated services this project uses — Vertex AI
-(via a hackathon GCP project) and Roboflow (via a demo API key) — were
-expected to lose access within 24 hours of writing this. The NYC DOT API is
+They originally existed because the two paid/gated services this project
+used — Vertex AI (via a hackathon GCP project) and Roboflow (via a demo API
+key) — were expected to lose access within 24 hours of writing this. That
+prediction held: the hackathon account was later deleted
+(`invalid_grant: Account has been deleted`), which is part of why Gemini
+access no longer goes through Vertex AI at all — see section 3 below and
+[RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key). The NYC DOT API is
 public and permanent, but its response is included too for completeness and
-because the exact frame shown here is what produced the Vertex AI and
+because the exact frame shown here is what produced the Gemini and
 Roboflow examples below (same camera, same moment).
 
 If you no longer have working credentials, this doc is the way to still
@@ -50,12 +54,16 @@ Returns a raw JPEG. The one captured for this doc was 18,737 bytes,
 is why `main.py` passes `response.content` directly around rather than
 parsing anything.
 
-## 3. Vertex AI — `client.models.generate_content()`
+## 3. Gemini — `client.models.generate_content()`
 
 This is the SDK call in `analyze_frame()`; under the hood it's a POST to:
 ```
-https://us-central1-aiplatform.googleapis.com/v1beta1/projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent
+https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
 ```
+(Not Vertex AI — this project switched backends; see
+[RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key) for why. Same
+`google-genai` SDK, same `client.models.generate_content()` call shape,
+different `client` construction and a different underlying endpoint.)
 
 **Input:** the JPEG bytes above (as a `Part.from_bytes(data=..., mime_type="image/jpeg")`)
 plus the prompt string `"Describe the traffic and road conditions visible
@@ -63,13 +71,80 @@ in this camera image in one concise sentence."`
 
 **Output** (`response.text`):
 ```
-Sparse evening traffic is navigating wet, reflective roads under artificial light.
+Traffic is light on a multi-lane city street under clear, dry conditions with well-marked lanes and crosswalks.
 ```
 
-**Full response object**, captured 2026-08-08 using the `google-genai`
-SDK (the `vertexai.generative_models` SDK this project originally used is
-being retired June 24, 2026 — see the migration note in
-[CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md#build_vertex_client--build_roboflow_client)):
+**Full response object**, captured 2026-08-08 via the direct Gemini API
+(the same call, run against the earlier Vertex AI backend, is preserved
+below for comparison — the shape is nearly identical, the backend swap
+changed the client, not how results are read):
+```python
+GenerateContentResponse(
+  automatic_function_calling_history=[],
+  candidates=[
+    Candidate(
+      content=Content(
+        parts=[
+          Part(
+            text='Traffic is light on a multi-lane city street under clear, dry conditions with well-marked lanes and crosswalks.',
+            thought_signature=b'...'   # opaque, truncated here; not something the code reads
+          ),
+        ],
+        role='model'
+      ),
+      finish_reason=<FinishReason.STOP: 'STOP'>,
+      index=0
+    ),
+  ],
+  model_version='gemini-3.6-flash',
+  response_id='_0J3aoeOC_PI-8YP88ry8QE',
+  sdk_http_response=HttpResponse(headers=<dict len=12>),
+  usage_metadata=GenerateContentResponseUsageMetadata(
+    candidates_token_count=25,
+    prompt_token_count=1097,
+    prompt_tokens_details=[
+      ModalityTokenCount(modality=<MediaModality.IMAGE: 'IMAGE'>, token_count=1080),
+      ModalityTokenCount(modality=<MediaModality.TEXT: 'TEXT'>, token_count=17),
+    ],
+    thoughts_token_count=178,
+    total_token_count=1300
+  )
+)
+```
+
+Things worth noticing here that aren't visible from just calling
+`.text.strip()` in the code:
+- **`model_version='gemini-3.6-flash'`** — the code requests
+  `gemini-flash-latest`, an alias; Google is currently resolving it to
+  Gemini 3.6 Flash, a newer generation than the `gemini-2.5-flash` this
+  project originally pinned. This is exactly the intended behavior (see
+  [CODE_WALKTHROUGH.md](CODE_WALKTHROUGH.md#build_gemini_client--build_roboflow_client))
+  — it also means the *actual model answering* can change without any
+  code change here, which is a real tradeoff to be aware of, not just a
+  convenience.
+- **`thoughts_token_count=178`** — still a "thinking" model, still
+  billing for reasoning never seen by this code (see
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md#cost-the-thinking-token-problem)),
+  but notably lower than the ~670–740 range seen on `gemini-2.5-flash` for
+  a similar prompt (below) — cost-per-call isn't fixed even for "the same
+  code," since the resolved model changes over time.
+- **`prompt_tokens_details` image cost jumped**: 1080 tokens for the image
+  here vs. 258 on the old Vertex AI capture below, for a similarly-sized
+  JPEG. Different model generations appear to tokenize images very
+  differently — another reason the cost estimate in
+  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md#cost-the-thinking-token-problem)
+  is explicitly a rough, point-in-time estimate, not a guarantee.
+- **`finish_reason=STOP`** is the "normal, complete answer" case. Other
+  values (`MAX_TOKENS`, `SAFETY`, etc.) would mean the response was cut off
+  or blocked — the current code doesn't check this field at all, it just
+  trusts `.text` exists.
+- No `avg_logprobs` or `create_time` in this capture (both present in the
+  Vertex AI capture below) — minor field differences between backends/SDK
+  versions that don't affect anything `analyze_frame()` actually reads.
+
+<details>
+<summary>Earlier capture against Vertex AI (before the backend switch), for comparison</summary>
+
 ```python
 GenerateContentResponse(
   automatic_function_calling_history=[],
@@ -103,33 +178,9 @@ GenerateContentResponse(
   )
 )
 ```
-
-Things worth noticing here that aren't visible from just calling
-`.text.strip()` in the code:
-- **`thoughts_token_count=672`** — Gemini 2.5 Flash is a "thinking" model;
-  it spent 672 tokens reasoning internally before writing the 13-token
-  answer. That reasoning is billed (see `total_token_count=959`, far
-  larger than `prompt_token_count + candidates_token_count` alone) even
-  though this code never sees or prints it. This matters for cost — see
-  [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md). (The exact token
-  counts differ slightly from run to run even for a similar scene/prompt —
-  compare against the original SDK's capture, which had
-  `thoughts_token_count: 740` for the same prompt on a different frame;
-  the shape and the underlying cost dynamic are what matter, not the exact
-  numbers.)
-- **`prompt_tokens_details`** shows the image itself cost 258 tokens —
-  images aren't free just because you're not sending text.
-- **`finish_reason=STOP`** is the "normal, complete answer" case. Other
-  values (`MAX_TOKENS`, `SAFETY`, etc.) would mean the response was cut off
-  or blocked — the current code doesn't check this field at all, it just
-  trusts `.text` exists.
-- **Structurally**, this is a Python object with a readable `repr()`
-  (dataclass-like), not the protobuf text format the old
-  `vertexai.generative_models` SDK printed — same information, different
-  presentation, and the field names carried over almost unchanged
-  (`thoughts_token_count`, `finish_reason`, etc.), which is why
-  `analyze_frame()`'s only change during the migration was how the client
-  and call are constructed, not how the result is read.
+Endpoint at the time: `https://us-central1-aiplatform.googleapis.com/v1beta1/projects/cloudrun-hack26nyc-4392/locations/us-central1/publishers/google/models/gemini-2.5-flash:generateContent`,
+via `genai.Client(vertexai=True, project=..., location=...)`.
+</details>
 
 ## 4. Roboflow — `InferenceHTTPClient.infer()`
 

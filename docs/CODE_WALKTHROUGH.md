@@ -1,16 +1,16 @@
 # Code Walkthrough
 
-Three files now, not one: **`pipeline.py`** (shared NYC DOT/Vertex
-AI/Roboflow logic), **`main.py`** (the original local script), and
-**`app.py`** (the Cloud Run service added later, covering the same ground
-over HTTP instead of a local browser tab). This doc walks through all
-three, explaining *why* each is written the way it is — including
-non-obvious decisions that came from bugs hit while building them. Pair
-this with [API_EXAMPLES.md](API_EXAMPLES.md) (what the external calls
-actually return) and [ARCHITECTURE.md](ARCHITECTURE.md) (the system-level
-picture, including a diagram of how these three files relate). This doc
-alone should be enough to understand the code even without Vertex AI or
-Roboflow access.
+Three files now, not one: **`pipeline.py`** (shared NYC DOT/Gemini/Roboflow
+logic), **`main.py`** (the original local script), and **`app.py`** (the
+Cloud Run service added later, covering the same ground over HTTP instead
+of a local browser tab). This doc walks through all three, explaining
+*why* each is written the way it is — including non-obvious decisions
+that came from bugs hit while building them. Pair this with
+[API_EXAMPLES.md](API_EXAMPLES.md) (what the external calls actually
+return) and [ARCHITECTURE.md](ARCHITECTURE.md) (the system-level picture,
+including a diagram of how these three files relate). This doc alone
+should be enough to understand the code even without Gemini or Roboflow
+access.
 
 ## `pipeline.py` — shared logic
 
@@ -34,19 +34,24 @@ the codebase instead of one) traded for not making the shared module have
 an import-time side effect that isn't obviously its job.
 
 ```python
-PROJECT_ID = "cloudrun-hack26nyc-4392"
-LOCATION = "us-central1"
 ROBOFLOW_API_URL = "https://serverless.roboflow.com"
 ROBOFLOW_MODEL_ID = "vehicle-detection-3mmwj/1"
 ```
 
-Hardcoded, not environment-driven, and now centralized here instead of
-duplicated in both entry points. `PROJECT_ID` is tied to a specific
-(temporary, hackathon) GCP project — this is the first thing that breaks
-once that project access is gone. `ROBOFLOW_MODEL_ID` points at a *public*
+Hardcoded, not environment-driven, and centralized here instead of
+duplicated in both entry points. `ROBOFLOW_MODEL_ID` points at a *public*
 Roboflow Universe model, not anything trained for this project — see
 [API_EXAMPLES.md](API_EXAMPLES.md#4-roboflow--inferencehttpclientinfer)
 for what its output actually looks like.
+
+There used to be a `PROJECT_ID`/`LOCATION` pair here too, for Vertex AI.
+The original version of this doc flagged them as "the first thing that
+breaks once that project access is gone" — which is exactly what
+happened (the hackathon account backing that project was deleted), and
+why they're gone now rather than fixed: the
+[Gemini client](#build_gemini_client--build_roboflow_client) moved to a
+plain API key with no GCP project tied to it at all, so there's nothing
+here left to break the same way.
 
 ### `get_cameras()`
 
@@ -100,11 +105,11 @@ used to be two inline lines in `poll_camera`) specifically so `app.py`
 could wrap it in `asyncio.to_thread(fetch_frame, image_url)` — see the
 `app.py` section below for why that matters.
 
-### `build_vertex_client()` / `build_roboflow_client()`
+### `build_gemini_client()` / `build_roboflow_client()`
 
 ```python
-def build_vertex_client():
-    return genai.Client(vertexai=True, project=PROJECT_ID, location=LOCATION)
+def build_gemini_client():
+    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 def build_roboflow_client():
     return InferenceHTTPClient(api_url=ROBOFLOW_API_URL, api_key=os.environ["ROBOFLOW_API_KEY"])
@@ -116,16 +121,32 @@ New in the extraction — previously this setup was inlined directly in
 iteration of their respective loops, so giving the construction its own
 named function meant `main.py`'s `poll_camera()` and `app.py`'s
 `rotation_loop()` could each call the same two lines instead of repeating
-Vertex AI's client setup and Roboflow's client setup independently.
+Gemini's client setup and Roboflow's client setup independently.
 
-`build_vertex_client()` was rewritten once already, migrating off the
-deprecated `vertexai.generative_models` SDK (retiring June 24, 2026) onto
-the `google-genai` SDK — it originally called `vertexai.init(...)` and
-returned a `GenerativeModel("gemini-2.5-flash")`; now it returns a single
-`genai.Client(vertexai=True, ...)` that isn't tied to one model name. That
-shift — from "the client *is* a specific model" to "the client is generic,
-you name the model per call" — is why the model string moved from here
-into `analyze_frame()` below.
+This function has been rewritten **twice**, for two unrelated reasons:
+
+1. **SDK migration** — off the deprecated `vertexai.generative_models`
+   SDK (retiring June 24, 2026) onto `google-genai`. It originally called
+   `vertexai.init(...)` and returned a `GenerativeModel("gemini-2.5-flash")`;
+   after this change it returned a `genai.Client(vertexai=True, ...)`
+   that isn't tied to one model name. That shift — from "the client *is*
+   a specific model" to "the client is generic, you name the model per
+   call" — is why the model string lives in `analyze_frame()` below, not
+   here, regardless of which backend the client points at.
+2. **Backend switch, Vertex AI → direct Gemini API** — the hackathon GCP
+   project this ran against had its account deleted
+   (`invalid_grant: Account has been deleted`), and rather than redo the
+   full GCP project + billing + IAM setup under a new account, the client
+   now points at Google's direct Gemini Developer API instead:
+   `genai.Client(api_key=...)` in place of
+   `genai.Client(vertexai=True, project=..., location=...)`. Same SDK,
+   different backend — see
+   [RUNBOOK.md](RUNBOOK.md#setting-up-the-gemini-key) for the full story
+   and why this is arguably the better default going forward regardless
+   (no GCP project/billing/IAM needed at all). The function name changed
+   from `build_vertex_client` to `build_gemini_client` to match — it was
+   never really "the Vertex client," it's "the client that talks to
+   Gemini," and now the name says so.
 
 ### `analyze_frame(client, frame)`
 
@@ -133,19 +154,24 @@ into `analyze_frame()` below.
 def analyze_frame(client, frame):
     image_part = Part.from_bytes(data=frame, mime_type="image/jpeg")
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-flash-latest",
         contents=[image_part, "Describe the traffic and road conditions visible in this camera image in one concise sentence."],
     )
     return response.text.strip()
 ```
 
-Takes an already-constructed client (from `build_vertex_client()`, called
+Takes an already-constructed client (from `build_gemini_client()`, called
 once) and raw JPEG bytes. `Part.from_bytes` wraps bytes for a multimodal
-prompt (the old SDK's near-identical `Part.from_data` renamed, part of the
-same migration mentioned above); the list `[image_part, "..."]` is "image,
-then text instruction," which is how you mix modalities in a single
-`generate_content` call — that part of the shape didn't change across the
-SDK migration.
+prompt; the list `[image_part, "..."]` is "image, then text instruction,"
+which is how you mix modalities in a single `generate_content` call.
+
+The model name is `gemini-flash-latest`, not `gemini-2.5-flash` — a
+direct consequence of the backend switch above. `gemini-2.5-flash` (used
+throughout while this ran on Vertex AI) returned
+`404: This model ... is no longer available to new users` against a fresh
+direct-API key; `gemini-flash-latest` is an alias Google maintains to
+always point at their current recommended flash model, chosen specifically
+so this doesn't silently break again the same way.
 
 Only `.text` is used — the response object carries much more (token
 counts, finish reason, thinking-token counts). See
@@ -236,7 +262,7 @@ opened by mistake — every run gets a fresh file).
 
 The orchestration loop. Three things happen once, before the loop starts:
 1. `open_camera_viewer(all_cams, interval)` — opens the browser tab.
-2. `build_vertex_client()` — one Gemini client, reused every iteration.
+2. `build_gemini_client()` — one Gemini client, reused every iteration.
 3. `build_roboflow_client()` — one Roboflow client, reused every iteration.
 
 (These last two used to be inlined here directly; they now come from
@@ -304,7 +330,7 @@ Jobs/batch alternative.
 
 ```python
 async def rotation_loop():
-    vertex_client = build_vertex_client()
+    gemini_client = build_gemini_client()
     roboflow_client = build_roboflow_client()
     idx = 0
     while True:
@@ -313,7 +339,7 @@ async def rotation_loop():
         try:
             if image_url:
                 frame = await asyncio.to_thread(fetch_frame, image_url)
-                description = await asyncio.to_thread(analyze_frame, vertex_client, frame)
+                description = await asyncio.to_thread(analyze_frame, gemini_client, frame)
                 vehicles = await asyncio.to_thread(detect_vehicles, roboflow_client, frame)
                 async with state_lock:
                     state["camera"] = {...}

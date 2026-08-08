@@ -17,8 +17,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from pipeline import (
     analyze_frame,
+    build_gemini_client,
     build_roboflow_client,
-    build_vertex_client,
     detect_vehicles,
     fetch_frame,
     filter_online_cameras,
@@ -38,7 +38,7 @@ state_lock = asyncio.Lock()
 
 
 async def rotation_loop():
-    vertex_client = build_vertex_client()
+    gemini_client = build_gemini_client()
     roboflow_client = build_roboflow_client()
 
     idx = 0
@@ -48,7 +48,7 @@ async def rotation_loop():
         try:
             if image_url:
                 frame = await asyncio.to_thread(fetch_frame, image_url)
-                description = await asyncio.to_thread(analyze_frame, vertex_client, frame)
+                description = await asyncio.to_thread(analyze_frame, gemini_client, frame)
                 vehicles = await asyncio.to_thread(detect_vehicles, roboflow_client, frame)
 
                 async with state_lock:
@@ -158,7 +158,7 @@ setInterval(function() {{
 }}, rotateMs);
 
 // Analysis text comes from the server, which is the only thing that holds
-// Vertex AI / Roboflow credentials — images and the map above never touch it.
+// Gemini / Roboflow credentials — images and the map above never touch it.
 //
 // Important: the server runs ONE shared rotation loop for all viewers,
 // independent of each browser tab's own image-rotation timer above. This
